@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search - UniHub</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fas fa-graduation-cap"></i>
+                    <span>UniHub</span>
+                </div>
+                <nav class="nav">
+                    <a href="index.html" class="nav-link">Home</a>
+                    <a href="search.html" class="nav-link active">Search</a>
+                    <a href="explorer.html" class="nav-link">Explore</a>
+                    <a href="upload.html" class="nav-link">Upload</a>
+                    <a href="quiz.html" class="nav-link">Quiz</a>
+                    <a href="profile.html" class="nav-link">Profile</a>
+                </nav>
+                <a href="login.html" class="btn btn-primary">Log out</a>
+            </div>
+        </div>
+    </header>
+
+    <div class="search-page">
+        <div class="container">
+            <div class="search-hero">
+                <h1>Find Your Perfect Study Material</h1>
+                <div class="search-box-large">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="searchInput"
+                        placeholder="Search by title, course, university, or description...">
+                    <button class="btn btn-primary" id="searchBtn">Search</button>
+                </div>
+            </div>
+
+            <div class="search-results">
+                <div class="results-header">
+                    <h2>Search Results <span class="results-count" id="resultsCount">(0 documents found)</span></h2>
+                    <div class="sort-group">
+                        <label>Sort by:</label>
+                        <select class="sort-select" id="sortSelect">
+                            <option value="relevance">Most Relevant</option>
+                            <option value="recent">Most Recent</option>
+                            <option value="popular">Most Popular</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="document-list" id="searchResultsList">
+                    <p class="loading-text">Enter a search term to find documents...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="ai-chatbot" id="aiChatbot">
+        <button class="chatbot-toggle" id="chatbotToggle">
+            <i class="fas fa-robot"></i>
+        </button>
+        <div class="chatbot-window" id="chatbotWindow">
+            <div class="chatbot-header">
+                <div>
+                    <i class="fas fa-robot"></i>
+                    <span>AI Search Assistant</span>
+                </div>
+                <button class="chatbot-close" id="chatbotClose">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="chatbot-messages" id="chatbotMessages">
+                <div class="chatbot-message bot-message">
+                    <div class="message-avatar">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <div class="message-content">
+                        Hello! I'm your AI assistant. How can I help you find documents today?
+                    </div>
+                </div>
+            </div>
+            <div class="chatbot-input">
+                <input type="text" placeholder="Ask me anything..." id="chatbotInput">
+                <button id="chatbotSend">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="./js/auth.js"></script>
+    <script src="./js/script.js"></script>
+    <script src="./js/search.js"></script>
+</body>
+</html>
