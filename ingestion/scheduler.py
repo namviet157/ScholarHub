@@ -9,16 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from arxiv_crawler import crawl_single_paper
 from reference_extractor import extract_references_for_paper
-from dotenv import load_dotenv
-from supabase import create_client, Client
 
-load_dotenv()
-supabase = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
-
-PAPER_BUCKET = os.getenv("PAPER_BUCKET")
 
 # Global statistics
 stats_lock = Lock()
@@ -318,7 +309,6 @@ def main():
         except OSError:
             disk_usage_end = shutil.disk_usage(pathlib.Path.cwd().anchor).used
         _print_custom_resource_report(disk_usage_start, disk_usage_end)
-
 
 if __name__ == "__main__":
     main()

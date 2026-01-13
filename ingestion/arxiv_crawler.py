@@ -7,6 +7,8 @@ import tarfile
 import shutil
 import subprocess
 import gzip
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 
 SAVE_DIR = "./ArXivPapers"
 
@@ -113,7 +115,7 @@ def crawl_single_paper(arxiv_id, save_dir=SAVE_DIR):
             except:
                 revised_dates.append(None)
 
-    pdf_url = base_paper.pdf_url
+    pdf_url = base_paper.pdf_url if base_paper.pdf_url else None
 
     metadata = {
         "arxiv_id": arxiv_id.replace('.', '-'),
