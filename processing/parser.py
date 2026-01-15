@@ -451,64 +451,107 @@ class HierarchyParser:
         return sentences
     
     def _create_leaf_nodes(self, content: str, source_file: str = "") -> List[HierarchyNode]:
-        """Create leaf nodes (sentences, formulas, figures) from content"""
-        nodes = []
-        
+        """
+        Create leaf nodes (sentences, formulas, figures) from content.
+        Preserves document order by tracking position of each element.
+        """
         # Check if this is a references section
         if self._is_references_section(content):
-            return nodes
+            return []
         
-        # Extract formulas and floats first
+        # List of (position, node) tuples to preserve order
+        positioned_nodes = []
+        
+        # Extract formulas and floats with their positions
         formulas = self._extract_block_formulas(content)
         floats = self._extract_floats(content)
         
-        # Mark positions of formulas and floats
-        excluded_ranges = []
-        
+        # Add formulas with their start positions
         for start, end, formula_content in formulas:
-            excluded_ranges.append((start, end))
-            nodes.append(HierarchyNode(
+            node = HierarchyNode(
                 node_type=NodeType.BLOCK_FORMULA,
                 content=formula_content,
                 source_file=source_file
-            ))
+            )
+            positioned_nodes.append((start, node))
         
+        # Add floats (figures/tables) with their start positions
         for start, end, float_content, label, caption, node_type in floats:
-            excluded_ranges.append((start, end))
-            nodes.append(HierarchyNode(
+            node = HierarchyNode(
                 node_type=node_type,
                 title=caption,
                 content=float_content,
                 label=label,
                 source_file=source_file
-            ))
+            )
+            positioned_nodes.append((start, node))
         
-        # Sort excluded ranges
-        excluded_ranges.sort()
+        # Sort excluded ranges to extract text segments
+        excluded_ranges = sorted([(s, e) for s, e, _ in formulas] + 
+                                  [(s, e) for s, e, _, _, _, _ in floats])
         
-        # Extract text between excluded ranges
-        text_segments = []
+        # Extract text segments with their positions
+        text_segments_with_pos = []
         last_end = 0
         for start, end in excluded_ranges:
             if start > last_end:
-                text_segments.append(content[last_end:start])
+                segment_text = content[last_end:start]
+                text_segments_with_pos.append((last_end, segment_text))
             last_end = max(last_end, end)
         if last_end < len(content):
-            text_segments.append(content[last_end:])
+            segment_text = content[last_end:]
+            text_segments_with_pos.append((last_end, segment_text))
         
-        # Split text into sentences
-        full_text = ' '.join(text_segments)
-        sentences = self._split_into_sentences(full_text)
+        # Process each text segment to extract sentences
+        for segment_start, segment_text in text_segments_with_pos:
+            if not segment_text.strip():
+                continue
+                
+            sentences = self._split_into_sentences(segment_text)
+            
+            # Find position of each sentence in the segment text
+            # This preserves relative order within the segment
+            # Use a more robust approach: track cumulative position
+            cumulative_pos = 0
+            for sentence in sentences:
+                if sentence and len(sentence) > 10:  # Filter very short fragments
+                    # Try to find sentence in cleaned segment text
+                    # The sentence might be cleaned, so we search for a substring match
+                    cleaned_segment = self.cleaner.extract_text_content(segment_text)
+                    
+                    # Find position using cleaned text
+                    sentence_pos_in_cleaned = cleaned_segment.find(sentence, cumulative_pos)
+                    if sentence_pos_in_cleaned == -1:
+                        # If not found exactly, try to find a similar substring
+                        # or use cumulative position as approximation
+                        sentence_pos_in_cleaned = cumulative_pos
+                    
+                    # Map back to original segment position (approximate)
+                    # Since cleaning might change positions, we use a ratio-based approach
+                    if len(cleaned_segment) > 0:
+                        ratio = sentence_pos_in_cleaned / len(cleaned_segment)
+                        sentence_pos_in_segment = int(ratio * len(segment_text))
+                    else:
+                        sentence_pos_in_segment = cumulative_pos
+                    
+                    # Update cumulative position for next sentence
+                    cumulative_pos = sentence_pos_in_cleaned + len(sentence)
+                    
+                    # Calculate absolute position in document
+                    absolute_pos = segment_start + sentence_pos_in_segment
+                    
+                    node = HierarchyNode(
+                        node_type=NodeType.SENTENCE,
+                        content=sentence,
+                        source_file=source_file
+                    )
+                    positioned_nodes.append((absolute_pos, node))
         
-        for sentence in sentences:
-            if sentence and len(sentence) > 10:  # Filter very short fragments
-                nodes.append(HierarchyNode(
-                    node_type=NodeType.SENTENCE,
-                    content=sentence,
-                    source_file=source_file
-                ))
+        # Sort all nodes by their position in the document
+        positioned_nodes.sort(key=lambda x: x[0])
         
-        return nodes
+        # Return only the nodes (without position info)
+        return [node for _, node in positioned_nodes]
     
     def _extract_abstract(self, content: str, source_file: str):
         pattern = re.compile(
@@ -1292,26 +1335,6 @@ class LaTeXParser:
             if matches:
                 return matches[-1]
         return None
-
-    def _apply_node_ids(self, node: Optional[HierarchyNode]):
-        """Prefix all node IDs with the paper id to keep them globally unique."""
-        if not node or not self.paper_id:
-            return
-
-        prefix = self.paper_id.strip()
-        if not prefix:
-            return
-
-        def assign(current: HierarchyNode):
-            if current.unique_id:
-                if not current.unique_id.startswith(f"{prefix}|"):
-                    current.unique_id = f"{prefix}|{current.unique_id}"
-            else:
-                current.unique_id = prefix
-            for child in current.children:
-                assign(child)
-
-        assign(node)
         
     def parse(self, main_file: str = "main.tex") -> Dict[str, Any]:
         """
@@ -1354,9 +1377,6 @@ class LaTeXParser:
         # Only load references that are actually cited
         self.references = self.bib_extractor.load_from_directory(str(self.base_dir), used_citation_keys=used_citation_keys)
         print(f"    Loaded {len(self.references)} bibliography entries (only cited references)")
-        
-        # Finalize IDs with paper prefix
-        # self._apply_node_ids(self.hierarchy)
         
         print("\n" + "=" * 60)
         print("Parsing complete!")
