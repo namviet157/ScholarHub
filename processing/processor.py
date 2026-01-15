@@ -3,13 +3,13 @@ import re
 import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-import shutil
 from parser import LaTeXParser, MilestoneExporter, Deduplicator
+from concurrent.futures import ThreadPoolExecutor
+from import_to_mongodb import process_paper_json
 
-# Common main file names
 MAIN_FILE_CANDIDATES = [
     'main.tex', 'paper.tex', 'article.tex', 'manuscript.tex',
-    'thesis.tex', 'document.tex', 'root.tex'
+    'thesis.tex', 'document.tex',     'root.tex'
 ]
 
 # Document class pattern to identify main files
@@ -18,14 +18,7 @@ BEGIN_DOCUMENT_PATTERN = re.compile(r'\\begin\{document\}', re.IGNORECASE)
 AUTHOR_DOCUMENT_PATTERN = re.compile(r'\\author', re.IGNORECASE)
 
 def find_main_file(tex_dir: str) -> Optional[str]:
-    """
-    Find the main LaTeX file in a directory.
-    
-    Strategy:
-    1. Look for common main file names
-    2. Look for files with \\documentclass that also have \\begin{document}
-    3. If only one .tex file at root level, use that
-    """
+    """Find the main LaTeX file in a directory."""
     tex_path = Path(tex_dir)
     
     if not tex_path.exists():
@@ -40,6 +33,7 @@ def find_main_file(tex_dir: str) -> Optional[str]:
     # Strategy 2: Find files with documentclass AND begin{document}
     root_tex_files = list(tex_path.glob('*.tex'))
     main_candidates = []
+    max_score = -1
     
     for tex_file in root_tex_files:
         try:
@@ -50,8 +44,17 @@ def find_main_file(tex_dir: str) -> Optional[str]:
             has_begin_doc = BEGIN_DOCUMENT_PATTERN.search(content)
             has_author = AUTHOR_DOCUMENT_PATTERN.search(content)
             
-            if has_docclass and has_begin_doc and has_author:
-                main_candidates.append(tex_file.name)
+            score = 0
+            if has_docclass: score += 2
+            if has_begin_doc: score += 2
+            if has_author: score += 1
+            if r'\section' in content: score += 1
+            
+            if score > max_score:
+                max_score = score
+                main_candidates = [tex_file.name]
+            elif score == max_score:
+                main_candidates.append(tex_file.name)    
         except Exception:
             continue
     
@@ -83,9 +86,7 @@ class MultiVersionProcessor:
     def __init__(self, paper_dir: str):
         self.paper_dir = Path(paper_dir)
         self.arxiv_id = self.paper_dir.name
-        # self.tex_dir = self.paper_dir / 'tex'
         
-        # Check if tex/ subdirectory exists, otherwise use paper_dir directly
         tex_dir_candidate = self.paper_dir / 'tex'
         self.tex_dir = tex_dir_candidate if tex_dir_candidate.exists() else self.paper_dir
         
@@ -170,8 +171,6 @@ class MultiVersionProcessor:
         combined_hierarchy = {}
         
         # Collect all references from all versions for cross-version deduplication
-        # Note: Each version's parser.references already contains only cited references
-        # Create copies to avoid mutating original parser references
         all_references: Dict[str, BibEntry] = {}
         for version, data in self.results.items():
             parser = data['parser']
@@ -260,16 +259,13 @@ class BatchProcessor:
         }
     
     def discover_papers(self) -> List[str]:
-        """Find all paper directories in the student folder."""
         self.papers.clear()
         
-        # Look for directories matching arXiv ID pattern
         arxiv_pattern = re.compile(r'\d{4}-\d{4,5}')
         
         for item in sorted(self.folder.iterdir()):
             if item.is_dir() and arxiv_pattern.match(item.name):
-                # Accept all paper folders (even without tex files)
-                # We want to preserve metadata.json and references.json for all papers
+                # if f"{item.name}.json" not in [f.name for f in item.iterdir()]:
                 self.papers.append(item)
         
         self.stats['total_papers'] = len(self.papers)
@@ -282,6 +278,8 @@ class BatchProcessor:
         
         if results:
             output_path = processor.export_combined()
+            if output_path:
+                process_paper_json(output_path / f"{paper_dir.name}.json")
             
             # Calculate stats
             total_elements = 0
@@ -311,16 +309,15 @@ class BatchProcessor:
                 'total_elements': 0,
                 'has_tex': False
             }
-        
-        return None
     
-    def process_all(self, limit: int = None, verbose: bool = True) -> Dict[str, Any]:
+    def process_all(self, limit: int = None, verbose: bool = True, max_workers: int = 5) -> Dict[str, Any]:
         """
-        Process all papers in the folder.
+        Process all papers in the folder using ThreadPoolExecutor for parallel processing.
         
         Args:
             limit: Maximum number of papers to process (for testing)
             verbose: Whether to print progress
+            max_workers: Maximum number of worker threads
         """
         papers = self.discover_papers()
         
@@ -334,7 +331,9 @@ class BatchProcessor:
         
         papers_to_process = self.papers[:limit] if limit else self.papers
         
-        for i, paper_dir in enumerate(papers_to_process):
+        def process_single_paper(args):
+            """Wrapper function to process a single paper with index tracking."""
+            i, paper_dir = args
             arxiv_id = paper_dir.name
             
             if verbose:
@@ -343,30 +342,41 @@ class BatchProcessor:
             
             try:
                 result = self.process_paper(paper_dir)
-                
-                if result:
-                    self.results[arxiv_id] = result
-                    self.stats['processed'] += 1
-                    
-                    if result.get('has_tex', True):
-                        self.stats['total_versions'] += result['versions_processed']
-                        self.stats['total_elements'] += result['total_elements']
-                        
-                        if verbose:
-                            print(f"  Successfully processed {result['versions_processed']} version(s)")
-                            print(f"  Elements: {result['total_elements']}")
-                    else:
-                        if verbose:
-                            print(f"  Folder created with metadata/references (no .tex files)")
-                else:
-                    self.stats['skipped'] += 1
-                    if verbose:
-                        print(f"  Skipped (no versions found or parse failed)")
-                        
+                return (i, arxiv_id, result, None)
             except Exception as e:
+                return (i, arxiv_id, None, str(e))
+        
+        # Process papers in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(process_single_paper, enumerate(papers_to_process, 1)))
+        
+        # Sort results by index to maintain order
+        results.sort(key=lambda x: x[0])
+        
+        # Process results and update stats
+        for i, arxiv_id, result, error in results:
+            if error:
                 self.stats['failed'] += 1
                 if verbose:
-                    print(f"  Failed: {str(e)}")
+                    print(f"  Failed: {error}")
+            elif result:
+                self.results[arxiv_id] = result
+                self.stats['processed'] += 1
+                
+                if result.get('has_tex', True):
+                    self.stats['total_versions'] += result['versions_processed']
+                    self.stats['total_elements'] += result['total_elements']
+                    
+                    if verbose:
+                        print(f"  Successfully processed {result['versions_processed']} version(s)")
+                        print(f"  Elements: {result['total_elements']}")
+                else:
+                    if verbose:
+                        print(f"  Folder created with metadata/references (no .tex files)")
+            else:
+                self.stats['skipped'] += 1
+                if verbose:
+                    print(f"  Skipped (no versions found or parse failed)")
         
         # Save processing summary
         summary_file = self.folder / 'processing_summary.json'
@@ -386,14 +396,13 @@ class BatchProcessor:
         
         return self.stats
 
-# Test with a few papers first
-FOLDER = "ArXivPapers"
+if __name__ == "__main__":
 
-# Initialize batch processor
-batch_processor = BatchProcessor(FOLDER)
+    FOLDER = "ArXivPapers"
 
-# Discover all papers
-papers = batch_processor.discover_papers()
-print(f"Found {len(papers)} papers in {FOLDER}")
+    batch_processor = BatchProcessor(FOLDER)
 
-stats = batch_processor.process_all(limit=5, verbose=True)
+    papers = batch_processor.discover_papers()
+    print(f"Found {len(papers)} papers in {FOLDER}")
+
+    stats = batch_processor.process_all(limit=500, verbose=True)

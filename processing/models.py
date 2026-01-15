@@ -82,15 +82,19 @@ class BibEntry:
         """Normalize a field value for comparison"""
         if not value:
             return ""
-        # Lowercase, strip whitespace, remove extra spaces
         normalized = value.lower().strip()
-        # Remove LaTeX commands and braces
         normalized = re.sub(r'\\[a-zA-Z]+\{([^}]*)\}', r'\1', normalized)
-        # Remove punctuation for comparison
         normalized = re.sub(r'[{}"\'.,;:\-]+', ' ', normalized)
-        # Collapse whitespace
         normalized = re.sub(r'\s+', ' ', normalized).strip()
         return normalized
+    
+    def get_normalized_title(self) -> str:
+        """Get normalized title for fuzzy comparison"""
+        return self._normalize_field(self.fields.get('title', ''))
+    
+    def get_normalized_author(self) -> str:
+        """Get normalized author for fuzzy comparison"""
+        return self._normalize_field(self.fields.get('author', ''))
     
     def has_sufficient_fields(self) -> bool:
         """Check if entry has enough fields for content-based deduplication"""
@@ -99,7 +103,7 @@ class BibEntry:
         year = self.fields.get('year', '').strip()
         doi = self.fields.get('doi', '').strip()
         
-        # Need at least title, or (author + year), or doi
+        # Need at least title or (author + year) or doi
         has_title = len(title) > 5
         has_author_year = len(author) > 3 and len(year) >= 4
         has_doi = len(doi) > 5
@@ -108,27 +112,26 @@ class BibEntry:
     
     def content_hash(self) -> str:
         """
-        Generate hash based on content for deduplication.
-        Returns unique key-based hash if fields are insufficient.
+        Generate hash based on content for deduplication
+        Returns unique key-based hash if fields are insufficient
         """
         # If fields are empty or insufficient, return key-based hash to prevent false merges
         if not self.fields or not self.has_sufficient_fields():
-            # Use key as unique identifier - no two entries with same key should merge incorrectly
             unique_str = f"__KEY_ONLY__:{self.key}:{self.entry_type}"
             return hashlib.md5(unique_str.encode()).hexdigest()
         
-        # Build hash from normalized key identifying fields
+        # Build hash
         hash_parts = []
         
         # Title (primary identifier)
-        title = self._normalize_field(self.fields.get('title', ''))
+        title = self.get_normalized_title()
         if title:
             hash_parts.append(f"title:{title}")
         
         # Author (secondary identifier)  
-        author = self._normalize_field(self.fields.get('author', ''))
+        author = self.get_normalized_author()
         if author:
-            # Extract first author's last name for more robust matching
+            # Extract first author's last name
             first_author = author.split(' and ')[0].strip()
             hash_parts.append(f"author:{first_author}")
         
@@ -150,10 +153,11 @@ class BibEntry:
         content = "|".join(sorted(hash_parts))
         return hashlib.md5(content.encode()).hexdigest()
     
-    def to_bibtex(self) -> str:
+    def to_bibtex(self, indent: int = 4) -> str:
+        indent_str = " " * indent
         lines = [f"@{self.entry_type}{{{self.key},"]
         for key, value in self.fields.items():
-            lines.append(f"  {key} = {{{value}}},")
+            lines.append(f"{indent_str}{key} = {{{value}}},")
         lines.append("}")
         return "\n".join(lines)
     
