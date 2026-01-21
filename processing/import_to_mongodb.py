@@ -7,6 +7,9 @@ import json
 from datetime import datetime, UTC
 from typing import Dict, List, Optional, Any, Tuple
 import re
+from embeddings import get_embedding_service
+from summarization import get_summarizer
+from keywords_extraction import get_keyword_extractor
 
 load_dotenv()
 
@@ -31,7 +34,6 @@ collection = db[COLLECTION_NAME]
 
 ARXIV_PAPERS_DIR = Path(__file__).parent.parent / "ArXivPapers"
 
-# Section patterns to identify sections
 SECTION_PATTERNS = [
     (r'\\section\*?\{([^}]*)\}', 'section'),
     (r'\\subsection\*?\{([^}]*)\}', 'subsection'),
@@ -39,7 +41,6 @@ SECTION_PATTERNS = [
     (r'\\chapter\*?\{([^}]*)\}', 'chapter'),
 ]
 
-# Common section titles to map to section_id
 SECTION_MAPPING = {
     'introduction': 'intro',
     'related work': 'related',
@@ -59,7 +60,6 @@ SECTION_MAPPING = {
 
 
 def normalize_section_id(title: str) -> str:
-    """Convert section title to normalized section_id"""
     title_lower = title.lower().strip()
     
     for key, section_id in SECTION_MAPPING.items():
@@ -71,8 +71,64 @@ def normalize_section_id(title: str) -> str:
     return section_id[:50]
 
 
+def reconstruct_sections_with_content(sections: List[Dict[str, Any]], chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    chunks_by_section = {}
+    for chunk in chunks:
+        section_id = chunk.get('section_id', '')
+        if section_id not in chunks_by_section:
+            chunks_by_section[section_id] = []
+        chunks_by_section[section_id].append(chunk)
+    
+    for section_id in chunks_by_section:
+        chunks_by_section[section_id].sort(key=lambda x: x.get('order', 0))
+    
+    reconstructed = []
+    for section in sections:
+        section_id = section.get('section_id', '')
+        section_chunks = chunks_by_section.get(section_id, [])
+        
+        content = []
+        for chunk in section_chunks:
+            chunk_type = chunk.get('type', 'paragraph')
+            text = chunk.get('text', '')
+            
+            if chunk_type == 'paragraph':
+                content.append({
+                    'type': 'paragraph',
+                    'text': text,
+                    'order': chunk.get('order', 0)
+                })
+            elif chunk_type == 'equation':
+                content.append({
+                    'type': 'equation',
+                    'text': text,
+                    'order': chunk.get('order', 0)
+                })
+        
+        reconstructed.append({
+            'section_id': section_id,
+            'title': section.get('title', ''),
+            'order': section.get('order', 0),
+            'content': content
+        })
+    
+    return reconstructed
+
+
+def reconstruct_full_text(chunks: List[Dict[str, Any]], abstract: str = "") -> str:
+    text_parts = [abstract] if abstract else []
+    
+    sorted_chunks = sorted(chunks, key=lambda x: x.get('order', 0))
+    
+    for chunk in sorted_chunks:
+        text = chunk.get('text', '')
+        if text:
+            text_parts.append(text)
+    
+    return ' '.join(text_parts)
+
+
 def extract_section_title(element_content: str) -> Optional[str]:
-    """Extract section title from LaTeX command"""
     for pattern, _ in SECTION_PATTERNS:
         match = re.search(pattern, element_content)
         if match:
@@ -81,7 +137,6 @@ def extract_section_title(element_content: str) -> Optional[str]:
 
 
 def extract_latex_equation(element_content: str) -> Optional[str]:
-    """Extract LaTeX equation from element content"""
     equation_match = re.search(r'\\begin\{equation\*?\}(.*?)\\end\{equation\*?\}', element_content, re.DOTALL)
     if equation_match:
         return equation_match.group(1).strip()
@@ -98,7 +153,6 @@ def extract_latex_equation(element_content: str) -> Optional[str]:
 
 
 def is_equation(element_content: str) -> bool:
-    """Check if element is an equation"""
     return (
         '\\begin{equation' in element_content or
         '\\end{equation' in element_content or
@@ -108,11 +162,9 @@ def is_equation(element_content: str) -> bool:
 
 
 def infer_node_type(element_content: str) -> str:
-    """Infer node type from element content"""
     if '\\document' in element_content.lower():
         return 'DOCUMENT'
     elif '\\abstract' in element_content.lower():
-        # Abstract is treated as CHAPTER type (per example format)
         return 'CHAPTER'
     elif re.search(r'\\chapter\*?\{', element_content):
         return 'CHAPTER'
@@ -136,7 +188,6 @@ def infer_node_type(element_content: str) -> str:
         return 'PARAGRAPH'
 
 def is_meaningful_content(text: str, node_type: str = 'PARAGRAPH') -> bool:
-    """Check if content is meaningful"""
     if not text or len(text.strip()) == 0:
         return False
     
@@ -149,14 +200,137 @@ def is_meaningful_content(text: str, node_type: str = 'PARAGRAPH') -> bool:
     
     return len(text) > 15
 
+def parse_hierarchy_to_chunks(
+    elements: Dict[str, str],
+    hierarchy: Dict[str, Dict[str, str]],
+    sections_metadata: List[Dict[str, Any]],
+    abstract: str = ""
+) -> List[Dict[str, Any]]:
+    chunks = []
+    chunk_order = 0
+    
+    if abstract and abstract.strip():
+        chunk_id = f"abstract_{chunk_order}"
+        chunks.append({
+            'chunk_id': chunk_id,
+            'section_id': 'abstract',
+            'section_order': 0,
+            'text': abstract.strip(),
+            'type': 'paragraph',
+            'order': chunk_order
+        })
+        chunk_order += 1
+    
+    root_id = None
+    for elem_id, content in elements.items():
+        if '\\document' in content.lower() or content.strip() == "\\document{Document}":
+            root_id = elem_id
+            break
+    
+    if not root_id and hierarchy:
+        version_key = list(hierarchy.keys())[-1]
+        version_hierarchy = hierarchy[version_key]
+        all_children = set(version_hierarchy.keys())
+        all_parents = set(version_hierarchy.values())
+        potential_roots = all_parents - all_children
+        if potential_roots:
+            root_id = list(potential_roots)[0]
+    
+    if not root_id:
+        return chunks
+    
+    version_key = list(hierarchy.keys())[-1] if hierarchy else None
+    if not version_key:
+        return chunks
+    
+    version_hierarchy = hierarchy[version_key]
+    children_map = {}
+    for child_id, parent_id in version_hierarchy.items():
+        if parent_id not in children_map:
+            children_map[parent_id] = []
+        children_map[parent_id].append(child_id)
+    
+    for section_info in sections_metadata:
+        section_id = section_info['section_id']
+        section_order = section_info['order']
+        section_title = section_info['title']
+        
+        section_elem_id = None
+        root_children = children_map.get(root_id, [])
+        
+        for child_id in root_children:
+            content = elements.get(child_id, '')
+            if '\\abstract' in content.lower():
+                continue
+            extracted_title = extract_section_title(content)
+            if extracted_title == section_title:
+                section_elem_id = child_id
+                break
+        
+        if not section_elem_id:
+            continue
+        
+        def collect_content(elem_id: str, visited: set, depth: int = 0) -> List[Dict[str, Any]]:
+            if elem_id in visited or depth > 10:
+                return []
+            visited.add(elem_id)
+            
+            content_list = []
+            children = children_map.get(elem_id, [])
+            
+            for child_id in children:
+                child_content = elements.get(child_id, '')
+                is_subsection = any(re.search(pattern, child_content) for pattern, _ in SECTION_PATTERNS)
+                
+                if is_subsection:
+                    sub_content = collect_content(child_id, visited, depth + 1)
+                    content_list.extend(sub_content)
+                else:
+                    if is_equation(child_content):
+                        latex = extract_latex_equation(child_content)
+                        if latex:
+                            content_list.append({
+                                "type": "equation",
+                                "text": latex
+                            })
+                    else:
+                        if child_content and child_content.strip():
+                            text = child_content.strip()
+                            if is_meaningful_content(text):
+                                content_list.append({
+                                    "type": "paragraph",
+                                    "text": text
+                                })
+            
+            return content_list
+        
+        section_content = collect_content(section_elem_id, set())
+        
+        section_chunk_idx = 0
+        for item in section_content:
+            item_type = item.get('type', 'paragraph')
+            text = item.get('text', '').strip()
+            
+            if text and len(text) > 10:
+                chunk_id = f"{section_id}_{section_chunk_idx}"
+                chunks.append({
+                    'chunk_id': chunk_id,
+                    'section_id': section_id,
+                    'section_order': section_order,
+                    'text': text,
+                    'type': item_type,
+                    'order': chunk_order
+                })
+                chunk_order += 1
+                section_chunk_idx += 1
+    
+    return chunks
+
+
 def parse_hierarchy_to_sections(
     elements: Dict[str, str],
     hierarchy: Dict[str, Dict[str, str]]
 ) -> List[Dict[str, Any]]:
-    """
-    Parse hierarchy structure to extract sections with content.
-    
-    """
     sections = []
     
     root_id = None
@@ -210,59 +384,14 @@ def parse_hierarchy_to_sections(
     section_elements.sort(key=lambda x: root_children.index(x['elem_id']) if x['elem_id'] in root_children else 999999)
     
     for idx, section_info in enumerate(section_elements):
-        section_elem_id = section_info['elem_id']
         section_title = section_info['title']
+        section_id = normalize_section_id(section_title)
         
-        def collect_content(elem_id: str, visited: set, start_order: int = 1, depth: int = 0) -> Tuple[List[Dict[str, Any]], int]:
-            """Recursively collect text content as structured objects, preserving document order.
-            Returns (content_list, next_order)"""
-            if elem_id in visited or depth > 10:  # Prevent infinite recursion
-                return [], start_order
-            visited.add(elem_id)
-            
-            content_list = []
-            current_order = start_order
-            children = children_map.get(elem_id, [])
-            
-            for child_id in children:
-                child_content = elements.get(child_id, '')
-                
-                is_subsection = any(re.search(pattern, child_content) for pattern, _ in SECTION_PATTERNS)
-                
-                if is_subsection:
-                    sub_content, next_order = collect_content(child_id, visited, current_order, depth + 1)
-                    content_list.extend(sub_content)
-                    current_order = next_order
-                else:
-                    if is_equation(child_content):
-                        latex = extract_latex_equation(child_content)
-                        if latex:
-                            content_list.append({
-                                "type": "equation",
-                                "latex": latex,
-                                "order": current_order
-                            })
-                            current_order += 1
-                    else:
-                        if child_content and child_content.strip():
-                            content_list.append({
-                                "type": "paragraph",
-                                "text": child_content,
-                                "order": current_order
-                            })
-                            current_order += 1
-            
-            return content_list, current_order
-        
-        content, _ = collect_content(section_elem_id, set())
-        
-        if content:
-            sections.append({
-                'section_id': normalize_section_id(section_title),
-                'title': section_title,
-                'order': idx + 1,
-                'content': content
-            })
+        sections.append({
+            'section_id': section_id,
+            'title': section_title,
+            'order': idx + 1
+        })
     
     return sections
 
@@ -285,6 +414,58 @@ def update_supabase_mongo_doc_id(paper_id: int, mongo_doc_id: str):
         return True
     except Exception as e:
         print(f"Error updating Supabase for paper_id {paper_id}: {str(e)}")
+        return False
+
+
+def update_supabase_embedding_status(paper_id: int, status: str):
+    try:
+        supabase.table("papers").update({
+            "embedding_status": status
+        }).eq("id", paper_id).execute()
+        return True
+    except Exception as e:
+        print(f"Error updating embedding status for paper_id {paper_id}: {str(e)}")
+        return False
+
+
+def save_keywords_to_supabase(paper_id: int, keywords_data: Dict[str, Any]) -> bool:
+    try:
+        supabase.table("keywords").delete().eq("paper_id", paper_id).execute()
+        
+        keywords_to_insert = []
+        
+        for kw in keywords_data.get('keybert', []):
+            keywords_to_insert.append({
+                'paper_id': paper_id,
+                'keyword': kw['keyword'],
+                'score': kw['score'],
+                'extraction_method': 'keybert',
+                'keybert_score': kw['score']
+            })
+        
+        for kw in keywords_data.get('tfidf', []):
+            if not any(k['keyword'] == kw['keyword'] for k in keywords_to_insert):
+                keywords_to_insert.append({
+                    'paper_id': paper_id,
+                    'keyword': kw['keyword'],
+                    'score': kw['score'],
+                    'extraction_method': 'tfidf',
+                    'tfidf_score': kw['score']
+                })
+        
+        if keywords_to_insert:
+            batch_size = 100
+            for i in range(0, len(keywords_to_insert), batch_size):
+                batch = keywords_to_insert[i:i + batch_size]
+                supabase.table("keywords").insert(batch).execute()
+            
+            return True
+        return False
+        
+    except Exception as e:
+        print(f"Error saving keywords to Supabase for paper_id {paper_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -321,17 +502,73 @@ def process_paper_json(json_path: Path) -> bool:
         supabase_paper_id = paper_data.get('id')
         version_key = paper_data.get('latest_version')
         
-        full_text_parts = [abstract] if abstract else []
-        for section in sections:
-            for content_item in section.get('content', []):
-                if content_item.get('type') == 'paragraph':
-                    full_text_parts.append(content_item.get('text', ''))
-                elif content_item.get('type') == 'equation':
-                    full_text_parts.append(content_item.get('latex', ''))
-        full_text = ' '.join(full_text_parts)
+        chunks = parse_hierarchy_to_chunks(elements, hierarchy, sections, abstract)
         
         total_sections = len(sections)
-        word_count = len(full_text.split()) if full_text else 0
+        total_chunks = len(chunks)
+        
+        word_count = 0
+        for chunk in chunks:
+            if chunk.get('text'):
+                word_count += len(chunk['text'].split())
+        
+        summaries = {}
+        try:
+            summarizer = get_summarizer()
+            full_text_body_only = reconstruct_full_text(chunks, "")
+            
+            summary_result = summarizer.summarize_paper(
+                abstract=abstract,
+                full_text=full_text_body_only,
+                generate_abstract_summary=True,
+                generate_document_summary=True
+            )
+            summaries = {
+                'abstract_summary': summary_result.get('abstract_summary'),
+                'document_summary': summary_result.get('document_summary')
+            }
+            print(f"  Generated summaries for {paper_id}")
+        except Exception as e:
+            print(f"  Warning: Failed to generate summaries for {paper_id}: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        keywords = {}
+        try:
+            keyword_extractor = get_keyword_extractor()
+            full_text = reconstruct_full_text(chunks, abstract)
+            paper_title = paper_data.get('paper_title', '')
+            
+            keybert_keywords = keyword_extractor.extract_from_paper(
+                abstract=abstract,
+                full_text=full_text,
+                title=paper_title,
+                top_n=10,
+                ngram_range=(1, 3)
+            )
+            
+            keywords = {
+                'keybert': [
+                    {
+                        'keyword': kw['keyword'],
+                        'score': kw['score'],
+                        'rank': idx + 1
+                    }
+                    for idx, kw in enumerate(keybert_keywords)
+                ],
+                'extraction_metadata': {
+                    'model': 'all-MiniLM-L6-v2',
+                    'extracted_at': datetime.now(UTC).isoformat() + "Z",
+                    'ngram_range': [1, 3],
+                    'top_n': 10
+                }
+            }
+            
+            print(f"  Extracted keywords for {paper_id}: {len(keybert_keywords)} keybert")
+        except Exception as e:
+            print(f"  Warning: Failed to extract keywords for {paper_id}: {e}")
+            import traceback
+            traceback.print_exc()
         
         existing = collection.find_one({"paper_id": paper_id})
         if existing:
@@ -343,10 +580,14 @@ def process_paper_json(json_path: Path) -> bool:
                         "abstract": abstract,
                         "latest_version": version_key,
                         "sections": sections,
-                        "full_text": full_text,
+                        "chunks": chunks,
+                        "summaries": summaries,
+                        "keywords": keywords,
                         "metadata": {
                             "total_sections": total_sections,
-                            "word_count": word_count
+                            "total_chunks": total_chunks,
+                            "word_count": word_count,
+                            "keyword_count": len(keywords.get('keybert', []))
                         },
                         "updated_at": datetime.now(UTC).isoformat() + "Z"
                     }
@@ -359,10 +600,14 @@ def process_paper_json(json_path: Path) -> bool:
                 "latest_version": version_key,
                 "abstract": abstract,
                 "sections": sections,
-                "full_text": full_text,
+                "chunks": chunks,
+                "summaries": summaries,
+                "keywords": keywords,
                 "metadata": {
                     "total_sections": total_sections,
-                    "word_count": word_count
+                    "total_chunks": total_chunks,
+                    "word_count": word_count,
+                    "keyword_count": len(keywords.get('keybert', []))
                 },
                 "created_at": datetime.now(UTC).isoformat() + "Z"
             }
@@ -387,6 +632,46 @@ def process_paper_json(json_path: Path) -> bool:
             else:
                 print(f"  Supabase already has correct mongo_doc_id")
         
+        if supabase_paper_id and keywords:
+            try:
+                if save_keywords_to_supabase(supabase_paper_id, keywords):
+                    print(f"  Saved {len(keywords.get('keybert', []))} keywords to Supabase")
+                else:
+                    print(f"  Warning: No keywords saved to Supabase")
+            except Exception as e:
+                print(f"  Warning: Failed to save keywords to Supabase: {e}")
+        
+        try:
+            embedding_service = get_embedding_service()
+            
+            sections_with_content = reconstruct_sections_with_content(sections, chunks)
+            
+            full_text = reconstruct_full_text(chunks, abstract)
+            
+            paper_data_for_embedding = {
+                'arxiv_id': arxiv_id,
+                'paper_title': paper_data.get('paper_title', ''),
+                'abstract': abstract,
+                'full_text': full_text,
+                'summaries': summaries
+            }
+            
+            if embedding_service.process_paper(paper_data_for_embedding, sections_with_content):
+                if supabase_paper_id:
+                    update_supabase_embedding_status(supabase_paper_id, "completed")
+                embedding_service.save()
+                print(f"  Generated and saved embeddings for {paper_id}")
+            else:
+                if supabase_paper_id:
+                    update_supabase_embedding_status(supabase_paper_id, "failed")
+                print(f"  Warning: Failed to generate embeddings for {paper_id}")
+        except Exception as e:
+            print(f"  Error generating embeddings: {e}")
+            if supabase_paper_id:
+                update_supabase_embedding_status(supabase_paper_id, "failed")
+            import traceback
+            traceback.print_exc()
+        
         return True
         
     except json.JSONDecodeError as e:
@@ -402,6 +687,27 @@ def process_paper_json(json_path: Path) -> bool:
 def main():
     collection.create_index("paper_id", unique=True)
     collection.create_index("created_at")
+    
+    try:
+        collection.create_index([
+            ("abstract", "text"),
+            ("chunks.text", "text"),
+            ("sections.title", "text")
+        ], name="text_search_idx")
+        print("Created text search index")
+    except Exception as e:
+        print(f"Note: Text index may already exist or failed: {e}")
+    
+    try:
+        collection.create_index("chunks.chunk_id")
+        collection.create_index("chunks.section_id")
+        collection.create_index("chunks.section_order")
+        collection.create_index("chunks.type")
+        collection.create_index("chunks.order")
+        print("Created chunk indexes")
+    except Exception as e:
+        print(f"Note: Chunk indexes may already exist: {e}")
+    
     if not ARXIV_PAPERS_DIR.exists():
         print(f"ArXivPapers directory not found: {ARXIV_PAPERS_DIR}")
         return
@@ -423,6 +729,8 @@ def main():
     for json_file in json_files:
         if process_paper_json(json_file):
             success_count += 1
+            if success_count >= 300:
+                break
         else:
             fail_count += 1
     
@@ -431,3 +739,6 @@ def main():
     print(f"  Success: {success_count}")
     print(f"  Failed: {fail_count}")
     print(f"  Total: {len(json_files)}")
+
+if __name__ == "__main__":
+    main()

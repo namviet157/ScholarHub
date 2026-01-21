@@ -11,7 +11,6 @@ from arxiv_crawler import crawl_single_paper
 from reference_extractor import extract_references_for_paper
 
 
-# Global statistics
 stats_lock = Lock()
 stats = {
     "total_processed": 0,
@@ -26,7 +25,6 @@ ram_samples_bytes = []
 peak_disk_usage_bytes = 0
 
 def _monitor_resources(baseline_ram, baseline_disk, sleep_interval=2):
-    """Monitor RAM and disk usage in background."""
     global ram_samples_bytes, peak_disk_usage_bytes, monitor_running
 
     ram_samples_bytes = []
@@ -53,7 +51,6 @@ def _monitor_resources(baseline_ram, baseline_disk, sleep_interval=2):
         time.sleep(sleep_interval)
 
 def _print_custom_resource_report(disk_start, disk_end):
-    """Print resource usage report."""
     global ram_samples_bytes, peak_disk_usage_bytes
 
     avg_ram_bytes = sum(ram_samples_bytes) / len(ram_samples_bytes) if ram_samples_bytes else 0
@@ -69,7 +66,6 @@ def _print_custom_resource_report(disk_start, disk_end):
     print("="*80)
 
 def process_paper(arxiv_id, save_dir="./ArXivPapers"):
-    """Process a single paper: crawl data first, then extract references."""
     try:
         crawler_success = crawl_single_paper(arxiv_id, save_dir)
         references_success = False
@@ -96,7 +92,6 @@ def process_paper(arxiv_id, save_dir="./ArXivPapers"):
 
 
 def check_paper_exists(arxiv_id):
-    """Check if paper exists with HEAD request."""
     url = f"https://arxiv.org/abs/{arxiv_id}"
     try:
         response = requests.head(url, timeout=5, allow_redirects=True)
@@ -108,7 +103,6 @@ def check_paper_exists(arxiv_id):
 
 
 def find_last_valid_id(prefix, start_id, jump1=50, back1=10, jump2=5, back2=1):
-    """Find last valid ID using binary search strategy."""
     try:
         start_id = int(start_id)
         jump1 = int(jump1)
@@ -157,7 +151,6 @@ def find_last_valid_id(prefix, start_id, jump1=50, back1=10, jump2=5, back2=1):
 
 
 def generate_paper_ids(start_month, start_id, end_month, end_id, save_dir="./ArXivPapers", resume_file=None):
-    """Generate list of arXiv IDs, optionally excluding already processed ones."""
     start_year, start_mon = start_month.split('-')
     end_year, end_mon = end_month.split('-')
     start_prefix = start_year[2:] + start_mon
@@ -195,14 +188,12 @@ def generate_paper_ids(start_month, start_id, end_month, end_id, save_dir="./ArX
 
 
 def print_progress_report():
-    """Print current statistics."""
     with stats_lock:
         total = stats['total_processed']
         print(f"\nProgress: {total} processed | Success: {stats['both_success']} | Crawler fail: {stats['only_crawler_fail']} | No refs: {stats['no_references']} | Errors: {stats['both_failed']}")
 
 
 def print_final_report():
-    """Print final statistics."""
     total = stats['total_processed']
     if total == 0:
         return
@@ -224,7 +215,6 @@ def print_final_report():
 
 def run_parallel_processing(start_month, start_id, end_month, end_id,
                             max_parallels=2, save_dir="./ArXivPapers"):
-    """Run parallel processing of papers."""
 
     with stats_lock:
         for key in stats:
@@ -266,8 +256,7 @@ def run_parallel_processing(start_month, start_id, end_month, end_id,
 
 
 def main():
-    """Main function to run the entire processing."""
-
+    
     START_MONTH = "2023-04"
     START_ID = 14607
     END_MONTH = "2023-05"

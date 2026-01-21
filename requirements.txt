@@ -10,7 +10,8 @@ bcrypt==4.0.1
 python-jose[cryptography]
 supabase
 httpx
-
+pymongo
+huggingface_hub 
 # AI & NLP stack
 torch
 transformers
@@ -20,7 +21,8 @@ scikit-learn
 numpy
 nltk
 deep-translator
-
+faiss-cpu
+sentencepiece
 # PDF processing
 PyMuPDF
 PyPDF2
