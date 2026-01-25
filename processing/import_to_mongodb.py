@@ -440,18 +440,7 @@ def save_keywords_to_supabase(paper_id: int, keywords_data: Dict[str, Any]) -> b
                 'keyword': kw['keyword'],
                 'score': kw['score'],
                 'extraction_method': 'keybert',
-                'keybert_score': kw['score']
             })
-        
-        for kw in keywords_data.get('tfidf', []):
-            if not any(k['keyword'] == kw['keyword'] for k in keywords_to_insert):
-                keywords_to_insert.append({
-                    'paper_id': paper_id,
-                    'keyword': kw['keyword'],
-                    'score': kw['score'],
-                    'extraction_method': 'tfidf',
-                    'tfidf_score': kw['score']
-                })
         
         if keywords_to_insert:
             batch_size = 100
@@ -555,13 +544,7 @@ def process_paper_json(json_path: Path) -> bool:
                         'rank': idx + 1
                     }
                     for idx, kw in enumerate(keybert_keywords)
-                ],
-                'extraction_metadata': {
-                    'model': 'all-MiniLM-L6-v2',
-                    'extracted_at': datetime.now(UTC).isoformat() + "Z",
-                    'ngram_range': [1, 3],
-                    'top_n': 10
-                }
+                ]
             }
             
             print(f"  Extracted keywords for {paper_id}: {len(keybert_keywords)} keybert")
@@ -685,40 +668,42 @@ def process_paper_json(json_path: Path) -> bool:
 
 
 def main():
-    collection.create_index("paper_id", unique=True)
-    collection.create_index("created_at")
+    # collection.create_index("paper_id", unique=True)
+    # collection.create_index("created_at")
     
-    try:
-        collection.create_index([
-            ("abstract", "text"),
-            ("chunks.text", "text"),
-            ("sections.title", "text")
-        ], name="text_search_idx")
-        print("Created text search index")
-    except Exception as e:
-        print(f"Note: Text index may already exist or failed: {e}")
+    # try:
+    #     collection.create_index([
+    #         ("abstract", "text"),
+    #         ("chunks.text", "text"),
+    #         ("sections.title", "text")
+    #     ], name="text_search_idx")
+    #     print("Created text search index")
+    # except Exception as e:
+    #     print(f"Note: Text index may already exist or failed: {e}")
     
-    try:
-        collection.create_index("chunks.chunk_id")
-        collection.create_index("chunks.section_id")
-        collection.create_index("chunks.section_order")
-        collection.create_index("chunks.type")
-        collection.create_index("chunks.order")
-        print("Created chunk indexes")
-    except Exception as e:
-        print(f"Note: Chunk indexes may already exist: {e}")
+    # try:
+    #     collection.create_index("chunks.chunk_id")
+    #     collection.create_index("chunks.section_id")
+    #     collection.create_index("chunks.section_order")
+    #     collection.create_index("chunks.type")
+    #     collection.create_index("chunks.order")
+    #     print("Created chunk indexes")
+    # except Exception as e:
+    #     print(f"Note: Chunk indexes may already exist: {e}")
     
     if not ARXIV_PAPERS_DIR.exists():
         print(f"ArXivPapers directory not found: {ARXIV_PAPERS_DIR}")
         return
-    
+
+    processed_ids = set(doc["paper_id"] for doc in collection.find({}, {"paper_id": 1}))
     json_files = []
     for paper_dir in ARXIV_PAPERS_DIR.iterdir():
         if paper_dir.is_dir():
             paper_id = paper_dir.name
-            json_file = paper_dir / f"{paper_id}.json"
-            if json_file.exists():
-                json_files.append(json_file)
+            if paper_id not in processed_ids:
+                json_file = paper_dir / f"{paper_id}.json"
+                if json_file.exists():
+                    json_files.append(json_file)
     
     print(f"Found {len(json_files)} paper JSON files")
     print("=" * 60)
