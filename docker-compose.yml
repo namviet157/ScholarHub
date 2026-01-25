@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  import-mongodb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scholarhub-import
+    volumes:
+      # Mount .env file
+      - ./.env:/app/.env:ro
+      # Mount ArXivPapers directory (if you have papers to process)
+      - ./ArXivPapers:/app/ArXivPapers:ro
+      # Mount embeddings directory to persist embeddings
+      - ./embeddings:/app/embeddings
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Override command if needed
+    # command: python processing/import_to_mongodb.py
+    restart: "no"

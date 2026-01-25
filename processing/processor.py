@@ -243,28 +243,6 @@ class MultiVersionProcessor:
         
         return self.paper_dir
 
-uploaded_ids_set = set()
-page_size = 1000
-offset = 0
-
-while True:
-    res = (
-        supabase
-        .table('papers')
-        .select('arxiv_id, mongo_doc_id')
-        .range(offset, offset + page_size - 1)
-        .execute()
-    )
-
-    if not res.data:
-        break
-
-    for item in res.data:
-        if item.get('mongo_doc_id') is not None:
-            uploaded_ids_set.add(item['arxiv_id'])
-
-    offset += page_size
-
 class BatchProcessor:
     def __init__(self, folder: str):
         self.folder = Path(folder)
@@ -285,10 +263,10 @@ class BatchProcessor:
         
         arxiv_pattern = re.compile(r'\d{4}-\d{4,5}')
 
-        print(f"Found {len(uploaded_ids_set)} already uploaded papers in the database.")
         for item in sorted(self.folder.iterdir()):
             if item.is_dir() and arxiv_pattern.match(item.name):
-                if item.name not in uploaded_ids_set:
+                files = [file.name for file in item.iterdir()]
+                if f'{item.name}.json' not in files or f'{item.name}_bibtex.bib' not in files:
                     self.papers.append(item)
         
         self.stats['total_papers'] = len(self.papers)
@@ -301,8 +279,8 @@ class BatchProcessor:
         
         if results:
             output_path = processor.export_combined()
-            if output_path:
-                process_paper_json(output_path / f"{paper_dir.name}.json")
+            # if output_path:
+            #     process_paper_json(output_path / f"{paper_dir.name}.json")
             
             # Calculate stats
             total_elements = 0

@@ -8,20 +8,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def format_arxiv_id_for_key(arxiv_id):
-    """
-    Convert arXiv ID to folder format (yymm-nnnnn).
-    Examples:
-        "2305.04793" -> "2305-04793"
-        "2305.04793v1" -> "2305-04793"
-    """
-    # Remove version suffix if present
     clean_id = re.sub(r'v\d+$', '', arxiv_id)
-    # Replace dot with dash
     return clean_id.replace('.', '-')
 
 
-def get_paper_references(arxiv_id, delay=3, max_retries=5):
-    """Fetch references from Semantic Scholar API with retries."""
+def get_paper_references(arxiv_id, delay=3, max_retries=5): 
     clean_id = re.sub(r'v\d+$', '', arxiv_id)
     url = f"https://api.semanticscholar.org/graph/v1/paper/arXiv:{clean_id}"
     params = {
@@ -57,7 +48,6 @@ def get_paper_references(arxiv_id, delay=3, max_retries=5):
 
 
 def convert_to_references_dict(references):
-    """Convert Semantic Scholar references to dict format."""
     result = {}
 
     for ref in references:
@@ -92,7 +82,6 @@ def convert_to_references_dict(references):
 
 
 def extract_references_for_paper(arxiv_id, save_dir="./ArXivPapers"):
-    """Extract references for a paper and save to references.json."""
     paper_id_key = format_arxiv_id_for_key(arxiv_id)
     paper_folder = os.path.join(save_dir, paper_id_key)
 

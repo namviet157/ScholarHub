@@ -1,0 +1,9 @@
+<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#F3F4F6"/>
+  <text x="50%" y="45%" text-anchor="middle" font-size="72" fill="#111">
+    ScholarHub
+  </text>
+  <text x="50%" y="55%" text-anchor="middle" font-size="32" fill="#555">
+    AI Research Companion
+  </text>
+</svg>
