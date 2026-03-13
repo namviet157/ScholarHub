@@ -1,4 +1,4 @@
-## UniHub
+## ScholarHub
 
 Academic document sharing platform for students. Upload, explore, and learn with AI-powered tools.
 
