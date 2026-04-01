@@ -5,52 +5,76 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import Header from "@/components/Header";
 import PaperCard from "@/components/PaperCard";
-import { mockPapers } from "@/data/mockPapers";
+import { useAuth } from "@/contexts/AuthContext";
+import { useScholarPapers } from "@/hooks/useScholarPapers";
+import { useDashboardStats } from "@/hooks/useDashboardStats";
+import { useMemo, useState, useSyncExternalStore } from "react";
+import { filterPapersByQuery } from "@/lib/papersRepository";
+import type { Paper } from "@/types/scholar";
+import {
+  formatRelativeTime,
+  getBookmarkIds,
+  getQuestionLog,
+  getReadingHistory,
+  subscribeLibraryChanges,
+} from "@/lib/userLibraryStorage";
+import { useNavigate, Link } from "react-router-dom";
+import { toast } from "sonner";
+
+function librarySnapshot(): string {
+  const h = getReadingHistory();
+  const q = getQuestionLog();
+  return [getBookmarkIds().join(","), h.length, h[0]?.viewedAt ?? "", q.length, q[0]?.at ?? ""].join("|");
+}
 
 const Dashboard = () => {
-  const recentQuestions = [
-    {
-      id: "1",
-      question: "What is the main contribution of the Transformer paper?",
-      answer: "The Transformer introduces self-attention mechanisms...",
-      timestamp: "2 hours ago",
-    },
-    {
-      id: "2",
-      question: "How does BERT differ from GPT?",
-      answer: "BERT uses bidirectional training while GPT is unidirectional...",
-      timestamp: "1 day ago",
-    },
-    {
-      id: "3",
-      question: "Explain the scaling laws for language models",
-      answer: "Scaling laws describe power-law relationships between...",
-      timestamp: "3 days ago",
-    },
-  ];
+  const navigate = useNavigate();
+  const { profile, user } = useAuth();
+  const { data: papers = [], isLoading, isError, error } = useScholarPapers();
+  const stats = useDashboardStats();
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const libRev = useSyncExternalStore(subscribeLibraryChanges, librarySnapshot, () => "");
+
+  const displayName = profile?.fullname ?? user?.email ?? "Researcher";
+
+  const libraryPapers = useMemo(
+    () => filterPapersByQuery(papers, libraryQuery).slice(0, 80),
+    [papers, libraryQuery]
+  );
+
+  const bookmarkedPapers = useMemo(() => {
+    const ids = new Set(getBookmarkIds());
+    if (ids.size === 0) return [];
+    return papers.filter((p) => ids.has(p.id));
+  }, [papers, libRev]);
+
+  const historyEntries = useMemo(() => {
+    const h = getReadingHistory();
+    const byId = new Map(papers.map((p) => [p.id, p] as const));
+    return h
+      .map((e) => ({ entry: e, paper: byId.get(e.paperId) }))
+      .filter((x): x is { entry: (typeof h)[number]; paper: Paper } => Boolean(x.paper))
+      .slice(0, 30);
+  }, [papers, libRev]);
+
+  const questionLog = useMemo(() => getQuestionLog(), [libRev, stats.questions]);
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
 
       <div className="container mx-auto px-4 py-8">
-        {/* Welcome Section */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-foreground mb-2">
-            Welcome back, Researcher
-          </h1>
-          <p className="text-muted">
-            Continue your research where you left off
-          </p>
+          <h1 className="text-3xl font-bold text-foreground mb-2">Welcome back, {displayName}</h1>
+          <p className="text-muted">Continue your research where you left off</p>
         </div>
 
-        {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           {[
-            { icon: Library, label: "Papers", value: "24" },
-            { icon: Bookmark, label: "Bookmarks", value: "12" },
-            { icon: Clock, label: "Read This Week", value: "8" },
-            { icon: MessageSquare, label: "Questions Asked", value: "45" },
+            { icon: Library, label: "In catalog", value: isLoading ? "…" : String(papers.length) },
+            { icon: Bookmark, label: "Bookmarks", value: String(stats.bookmarks) },
+            { icon: Clock, label: "Read this week", value: String(stats.readThisWeek) },
+            { icon: MessageSquare, label: "Questions", value: String(stats.questions) },
           ].map((stat) => (
             <Card key={stat.label} className="bg-card border-border">
               <CardContent className="p-4 flex items-center gap-3">
@@ -58,9 +82,7 @@ const Dashboard = () => {
                   <stat.icon className="h-5 w-5 text-primary" />
                 </div>
                 <div>
-                  <div className="text-2xl font-bold text-foreground">
-                    {stat.value}
-                  </div>
+                  <div className="text-2xl font-bold text-foreground">{stat.value}</div>
                   <div className="text-sm text-muted">{stat.label}</div>
                 </div>
               </CardContent>
@@ -68,10 +90,9 @@ const Dashboard = () => {
           ))}
         </div>
 
-        {/* Main Content Tabs */}
         <Tabs defaultValue="library" className="space-y-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <TabsList className="bg-card border border-border">
+            <TabsList className="bg-card border border-border flex-wrap h-auto">
               <TabsTrigger
                 value="library"
                 className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
@@ -108,9 +129,20 @@ const Dashboard = () => {
                 <Input
                   placeholder="Search library..."
                   className="pl-9 bg-card border-border"
+                  value={libraryQuery}
+                  onChange={(e) => setLibraryQuery(e.target.value)}
                 />
               </div>
-              <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
+              <Button
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+                type="button"
+                onClick={() => {
+                  toast.message("Thêm paper", {
+                    description: "Tải PDF qua pipeline Python, rồi làm mới trang Explore.",
+                  });
+                  navigate("/search");
+                }}
+              >
                 <Plus className="h-4 w-4 mr-2" />
                 Add Paper
               </Button>
@@ -118,49 +150,90 @@ const Dashboard = () => {
           </div>
 
           <TabsContent value="library" className="space-y-4">
-            {mockPapers.slice(0, 4).map((paper) => (
-              <PaperCard key={paper.id} paper={paper} />
-            ))}
+            {isError && (
+              <p className="text-sm text-destructive">
+                {error instanceof Error ? error.message : "Không tải được papers từ Supabase."}
+              </p>
+            )}
+            {isLoading && <p className="text-sm text-muted">Đang tải thư viện…</p>}
+            {!isLoading &&
+              !isError &&
+              libraryPapers.map((paper) => <PaperCard key={paper.id} paper={paper} />)}
+            {!isLoading && !isError && libraryPapers.length === 0 && (
+              <p className="text-sm text-muted">
+                Chưa có paper nào khớp tìm kiếm. Mở Explore hoặc kiểm tra RLS Supabase.
+              </p>
+            )}
           </TabsContent>
 
           <TabsContent value="bookmarks" className="space-y-4">
-            {mockPapers.slice(1, 3).map((paper) => (
-              <PaperCard key={paper.id} paper={paper} />
-            ))}
+            {bookmarkedPapers.length === 0 ? (
+              <p className="text-sm text-muted">
+                Chưa có bookmark. Dùng biểu tượng bookmark trên thẻ paper hoặc trang đọc.
+              </p>
+            ) : (
+              bookmarkedPapers.map((paper) => <PaperCard key={paper.id} paper={paper} />)
+            )}
           </TabsContent>
 
           <TabsContent value="history" className="space-y-4">
-            {mockPapers.slice(2, 5).map((paper) => (
-              <PaperCard key={paper.id} paper={paper} />
-            ))}
+            {historyEntries.length === 0 ? (
+              <p className="text-sm text-muted">
+                Mở một paper để lưu lịch sử đọc cục bộ (trên trình duyệt này).
+              </p>
+            ) : (
+              historyEntries.map(({ entry, paper }) => (
+                <Card key={entry.paperId + entry.viewedAt} className="bg-card border-border">
+                  <CardContent className="p-4 flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <Link
+                        to={`/paper/${paper.id}`}
+                        className="font-medium text-foreground hover:text-primary line-clamp-2 block"
+                      >
+                        {paper.title}
+                      </Link>
+                      <p className="text-xs text-muted mt-1">{formatRelativeTime(entry.viewedAt)}</p>
+                    </div>
+                    <Button size="sm" variant="outline" asChild>
+                      <Link to={`/paper/${paper.id}`}>Open</Link>
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))
+            )}
           </TabsContent>
 
           <TabsContent value="questions">
             <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="text-foreground">Recent Questions</CardTitle>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-foreground">Recent questions</CardTitle>
+                <Button variant="outline" size="sm" onClick={() => navigate("/chat")}>
+                  Open chat
+                </Button>
               </CardHeader>
               <CardContent className="space-y-4">
-                {recentQuestions.map((q) => (
-                  <div
-                    key={q.id}
-                    className="p-4 rounded-lg bg-accent/50 border border-border hover:border-primary/30 transition-colors cursor-pointer"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <h4 className="font-medium text-foreground mb-1">
-                          {q.question}
-                        </h4>
-                        <p className="text-sm text-muted line-clamp-1">
-                          {q.answer}
-                        </p>
+                {questionLog.length === 0 ? (
+                  <p className="text-sm text-muted">Chưa có câu hỏi. Dùng Ask AI hoặc ô chat trên paper.</p>
+                ) : (
+                  questionLog.map((q) => (
+                    <div
+                      key={q.id}
+                      className="p-4 rounded-lg bg-accent/50 border border-border hover:border-primary/30 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium text-foreground mb-1">{q.question}</h4>
+                          <p className="text-sm text-muted line-clamp-2 whitespace-pre-line">
+                            {q.answer}
+                          </p>
+                        </div>
+                        <span className="text-xs text-muted shrink-0">
+                          {formatRelativeTime(q.at)}
+                        </span>
                       </div>
-                      <span className="text-xs text-muted shrink-0">
-                        {q.timestamp}
-                      </span>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </CardContent>
             </Card>
           </TabsContent>

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface HeaderProps {
   showSearch?: boolean;
@@ -12,6 +13,7 @@ const Header = ({ showSearch = true }: HeaderProps) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
+  const { user, profile, signOut } = useAuth();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,12 +61,29 @@ const Header = ({ showSearch = true }: HeaderProps) => {
             <Link to="/dashboard">Dashboard</Link>
           </Button>
           <div className="w-px h-6 bg-border mx-2" />
-          <Button variant="outline" className="border-border text-foreground hover:bg-accent">
-            Log in
-          </Button>
-          <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
-            Sign up
-          </Button>
+          {user ? (
+            <>
+              <span className="text-sm text-muted max-w-[140px] truncate hidden lg:inline">
+                {profile?.fullname ?? user.email}
+              </span>
+              <Button
+                variant="outline"
+                className="border-border text-foreground hover:bg-accent"
+                onClick={() => void signOut()}
+              >
+                Log out
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" className="border-border text-foreground hover:bg-accent" asChild>
+                <Link to="/login">Log in</Link>
+              </Button>
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90" asChild>
+                <Link to="/signup">Sign up</Link>
+              </Button>
+            </>
+          )}
         </nav>
 
         {/* Mobile Menu Button */}
@@ -106,8 +125,34 @@ const Header = ({ showSearch = true }: HeaderProps) => {
               <Link to="/dashboard">Dashboard</Link>
             </Button>
             <div className="h-px bg-border my-2" />
-            <Button variant="outline" className="w-full">Log in</Button>
-            <Button className="w-full bg-primary text-primary-foreground">Sign up</Button>
+            {user ? (
+              <>
+                <p className="text-sm text-muted px-2">{profile?.fullname ?? user.email}</p>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    void signOut();
+                    setMobileMenuOpen(false);
+                  }}
+                >
+                  Đăng xuất
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" className="w-full" asChild>
+                  <Link to="/login" onClick={() => setMobileMenuOpen(false)}>
+                    Đăng nhập
+                  </Link>
+                </Button>
+                <Button className="w-full bg-primary text-primary-foreground" asChild>
+                  <Link to="/signup" onClick={() => setMobileMenuOpen(false)}>
+                    Đăng ký
+                  </Link>
+                </Button>
+              </>
+            )}
           </nav>
         </div>
       )}

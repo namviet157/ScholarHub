@@ -2,26 +2,34 @@ import { Bookmark, ExternalLink } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Paper } from "@/data/mockPapers";
+import type { Paper } from "@/types/scholar";
 import { Link } from "react-router-dom";
+import { useBookmark } from "@/hooks/useBookmark";
+import { cn } from "@/lib/utils";
 
 interface PaperCardProps {
   paper: Paper;
   highlightText?: string;
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 const PaperCard = ({ paper, highlightText }: PaperCardProps) => {
+  const { bookmarked, toggle } = useBookmark(paper.id);
+
   const highlightMatch = (text: string) => {
-    if (!highlightText) return text;
-    const regex = new RegExp(`(${highlightText})`, "gi");
-    const parts = text.split(regex);
+    if (!highlightText?.trim()) return text;
+    const esc = escapeRegExp(highlightText.trim());
+    const parts = text.split(new RegExp(`(${esc})`, "gi"));
     return parts.map((part, i) =>
-      regex.test(part) ? (
+      i % 2 === 1 ? (
         <mark key={i} className="bg-primary/20 text-foreground px-0.5 rounded">
           {part}
         </mark>
       ) : (
-        part
+        <span key={i}>{part}</span>
       )
     );
   };
@@ -36,24 +44,31 @@ const PaperCard = ({ paper, highlightText }: PaperCardProps) => {
                 {highlightMatch(paper.title)}
               </h3>
             </Link>
-            
+
             <p className="text-muted text-sm mb-2">
-              {paper.authors.slice(0, 3).join(", ")}
-              {paper.authors.length > 3 && ` +${paper.authors.length - 3} more`}
+              {paper.authors.length > 0
+                ? `${paper.authors.slice(0, 3).join(", ")}${
+                    paper.authors.length > 3 ? ` +${paper.authors.length - 3} more` : ""
+                  }`
+                : "—"}
             </p>
-            
-            <div className="flex items-center gap-3 text-sm text-muted mb-3">
+
+            <div className="flex items-center gap-3 text-sm text-muted mb-3 flex-wrap">
               <span className="font-medium text-primary">{paper.year}</span>
-              <span className="w-1 h-1 rounded-full bg-muted" />
+              <span className="w-1 h-1 rounded-full bg-muted hidden sm:block" />
               <span>{paper.venue}</span>
-              <span className="w-1 h-1 rounded-full bg-muted" />
-              <span>{paper.citations.toLocaleString()} citations</span>
+              {paper.citations > 0 && (
+                <>
+                  <span className="w-1 h-1 rounded-full bg-muted hidden sm:block" />
+                  <span>{paper.citations.toLocaleString()} citations</span>
+                </>
+              )}
             </div>
-            
+
             <p className="text-accent-foreground text-sm leading-relaxed mb-4 line-clamp-3">
               {paper.aiSummary}
             </p>
-            
+
             <div className="flex flex-wrap gap-2">
               {paper.keywords.slice(0, 4).map((keyword) => (
                 <Badge
@@ -66,14 +81,20 @@ const PaperCard = ({ paper, highlightText }: PaperCardProps) => {
               ))}
             </div>
           </div>
-          
+
           <div className="flex flex-col gap-2 shrink-0">
             <Button
               variant="ghost"
               size="icon"
-              className="text-muted hover:text-primary hover:bg-primary/10"
+              type="button"
+              aria-label={bookmarked ? "Remove bookmark" : "Add bookmark"}
+              className={cn(
+                "text-muted hover:text-primary hover:bg-primary/10",
+                bookmarked && "text-primary"
+              )}
+              onClick={() => toggle()}
             >
-              <Bookmark className="h-5 w-5" />
+              <Bookmark className={cn("h-5 w-5", bookmarked && "fill-primary")} />
             </Button>
             <Button
               variant="ghost"
