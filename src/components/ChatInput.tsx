@@ -2,6 +2,7 @@ import { Send, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useState, KeyboardEvent } from "react";
+import { useNavigate } from "react-router-dom";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -37,9 +38,15 @@ const ChatInput = ({ onSend, placeholder = "Ask a question about your papers..."
         disabled={disabled}
       />
       <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
-        <Button variant="ghost" size="sm" className="text-muted hover:text-primary">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-muted hover:text-primary"
+          onClick={() => navigate("/search")}
+        >
           <Paperclip className="h-4 w-4 mr-2" />
-          Attach Paper
+          Pick paper
         </Button>
         <Button
           onClick={handleSend}

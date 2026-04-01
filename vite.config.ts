@@ -10,6 +10,13 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
+    proxy: {
+      "/api/document": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/document/, "/document"),
+      },
+    },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {

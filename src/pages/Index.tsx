@@ -1,14 +1,17 @@
-import { Search, Sparkles, MessageSquare, FileText, Quote, ArrowRight, Upload } from "lucide-react";
+import { Search, Sparkles, MessageSquare, Quote, ArrowRight, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Header from "@/components/Header";
 import FeatureCard from "@/components/FeatureCard";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { usePaperCount } from "@/hooks/usePaperCount";
+import { toast } from "sonner";
 
 const Index = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const navigate = useNavigate();
+  const { data: catalogCount, isLoading: countLoading } = usePaperCount();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,7 +110,15 @@ const Index = () => {
               <Button
                 size="lg"
                 variant="outline"
+                type="button"
                 className="border-border text-foreground hover:bg-accent px-8"
+                onClick={() => {
+                  toast.message("Ingestion", {
+                    description:
+                      "Use the Python pipeline (batch / Supabase / Mongo) to add papers. Then refresh Explore.",
+                  });
+                  navigate("/search");
+                }}
               >
                 <Upload className="mr-2 h-4 w-4" />
                 Upload a Paper
@@ -142,10 +153,13 @@ const Index = () => {
         <div className="container mx-auto px-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 max-w-4xl mx-auto text-center">
             {[
-              { value: "2M+", label: "Papers Indexed" },
-              { value: "500K+", label: "Researchers" },
-              { value: "50M+", label: "Summaries Generated" },
-              { value: "99%", label: "Accuracy Rate" },
+              {
+                value: countLoading ? "…" : catalogCount != null ? String(catalogCount) : "—",
+                label: "Papers in your catalog",
+              },
+              { value: "AI", label: "Summaries & chat" },
+              { value: "Local", label: "Bookmarks & history" },
+              { value: "Open", label: "Supabase + Mongo" },
             ].map((stat) => (
               <div key={stat.label}>
                 <div className="text-3xl sm:text-4xl font-bold text-primary mb-2">
@@ -168,9 +182,7 @@ const Index = () => {
               </div>
               <span className="font-semibold text-lg text-foreground">ScholarHub</span>
             </div>
-            <p className="text-muted text-sm">
-              © 2024 ScholarHub. All rights reserved.
-            </p>
+            <p className="text-muted text-sm">© {new Date().getFullYear()} ScholarHub</p>
           </div>
         </div>
       </footer>

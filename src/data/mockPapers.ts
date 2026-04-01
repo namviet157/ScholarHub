@@ -1,18 +1,6 @@
-export interface Paper {
-  id: string;
-  title: string;
-  authors: string[];
-  year: number;
-  venue: string;
-  abstract: string;
-  aiSummary: string;
-  keywords: string[];
-  citations: number;
-  sections: {
-    title: string;
-    content: string;
-  }[];
-}
+import type { Paper } from "@/types/scholar";
+
+export type { Paper };
 
 export const mockPapers: Paper[] = [
   {
