@@ -137,8 +137,8 @@ const Dashboard = () => {
                 className="bg-primary text-primary-foreground hover:bg-primary/90"
                 type="button"
                 onClick={() => {
-                  toast.message("Thêm paper", {
-                    description: "Tải PDF qua pipeline Python, rồi làm mới trang Explore.",
+                  toast.message("Add papers", {
+                    description: "Ingest PDFs with the Python pipeline, then refresh Explore.",
                   });
                   navigate("/search");
                 }}
@@ -152,25 +152,23 @@ const Dashboard = () => {
           <TabsContent value="library" className="space-y-4">
             {isError && (
               <p className="text-sm text-destructive">
-                {error instanceof Error ? error.message : "Không tải được papers từ Supabase."}
+                {error instanceof Error ? error.message : "Could not load papers from Supabase."}
               </p>
             )}
-            {isLoading && <p className="text-sm text-muted">Đang tải thư viện…</p>}
+            {isLoading && <p className="text-sm text-muted">Loading library…</p>}
             {!isLoading &&
               !isError &&
               libraryPapers.map((paper) => <PaperCard key={paper.id} paper={paper} />)}
             {!isLoading && !isError && libraryPapers.length === 0 && (
               <p className="text-sm text-muted">
-                Chưa có paper nào khớp tìm kiếm. Mở Explore hoặc kiểm tra RLS Supabase.
+                No papers match your search. Open Explore or check Supabase RLS policies.
               </p>
             )}
           </TabsContent>
 
           <TabsContent value="bookmarks" className="space-y-4">
             {bookmarkedPapers.length === 0 ? (
-              <p className="text-sm text-muted">
-                Chưa có bookmark. Dùng biểu tượng bookmark trên thẻ paper hoặc trang đọc.
-              </p>
+              <p className="text-sm text-muted">No bookmarks yet. Use the bookmark icon on a card or paper page.</p>
             ) : (
               bookmarkedPapers.map((paper) => <PaperCard key={paper.id} paper={paper} />)
             )}
@@ -178,9 +176,7 @@ const Dashboard = () => {
 
           <TabsContent value="history" className="space-y-4">
             {historyEntries.length === 0 ? (
-              <p className="text-sm text-muted">
-                Mở một paper để lưu lịch sử đọc cục bộ (trên trình duyệt này).
-              </p>
+              <p className="text-sm text-muted">Open a paper to build local reading history in this browser.</p>
             ) : (
               historyEntries.map(({ entry, paper }) => (
                 <Card key={entry.paperId + entry.viewedAt} className="bg-card border-border">
@@ -207,13 +203,15 @@ const Dashboard = () => {
             <Card className="bg-card border-border">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-foreground">Recent questions</CardTitle>
-                <Button variant="outline" size="sm" onClick={() => navigate("/chat")}>
-                  Open chat
+                <Button variant="outline" size="sm" onClick={() => navigate("/search")}>
+                  Explore papers
                 </Button>
               </CardHeader>
               <CardContent className="space-y-4">
                 {questionLog.length === 0 ? (
-                  <p className="text-sm text-muted">Chưa có câu hỏi. Dùng Ask AI hoặc ô chat trên paper.</p>
+                  <p className="text-sm text-muted">
+                    No questions yet. Open a paper and use the chat button (bottom-right).
+                  </p>
                 ) : (
                   questionLog.map((q) => (
                     <div

@@ -55,9 +55,6 @@ const Header = ({ showSearch = true }: HeaderProps) => {
             <Link to="/search">Explore</Link>
           </Button>
           <Button variant="ghost" asChild className="text-foreground hover:text-primary hover:bg-accent">
-            <Link to="/chat">Ask AI</Link>
-          </Button>
-          <Button variant="ghost" asChild className="text-foreground hover:text-primary hover:bg-accent">
             <Link to="/dashboard">Dashboard</Link>
           </Button>
           <div className="w-px h-6 bg-border mx-2" />
@@ -119,9 +116,6 @@ const Header = ({ showSearch = true }: HeaderProps) => {
               <Link to="/search">Explore</Link>
             </Button>
             <Button variant="ghost" asChild className="justify-start">
-              <Link to="/chat">Ask AI</Link>
-            </Button>
-            <Button variant="ghost" asChild className="justify-start">
               <Link to="/dashboard">Dashboard</Link>
             </Button>
             <div className="h-px bg-border my-2" />
@@ -136,19 +130,19 @@ const Header = ({ showSearch = true }: HeaderProps) => {
                     setMobileMenuOpen(false);
                   }}
                 >
-                  Đăng xuất
+                  Log out
                 </Button>
               </>
             ) : (
               <>
                 <Button variant="outline" className="w-full" asChild>
                   <Link to="/login" onClick={() => setMobileMenuOpen(false)}>
-                    Đăng nhập
+                    Log in
                   </Link>
                 </Button>
                 <Button className="w-full bg-primary text-primary-foreground" asChild>
                   <Link to="/signup" onClick={() => setMobileMenuOpen(false)}>
-                    Đăng ký
+                    Sign up
                   </Link>
                 </Button>
               </>

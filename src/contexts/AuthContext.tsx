@@ -50,15 +50,17 @@ async function ensureUserProfile(session: Session): Promise<void> {
   const email = session.user.email;
   if (!email) return;
 
-  const { error: insErr } = await supabase.from("users").insert({
+  const row = {
     id: uid,
     fullname,
     email,
     university: meta.university?.trim() || null,
     major: meta.major?.trim() || null,
     password: AUTH_PASSWORD_PLACEHOLDER,
-  });
-  if (insErr) throw new Error(insErr.message);
+  };
+
+  const { error: upErr } = await supabase.from("users").upsert(row, { onConflict: "email" });
+  if (upErr) throw new Error(upErr.message);
 }
 
 async function fetchProfile(userId: string): Promise<UserProfile | null> {

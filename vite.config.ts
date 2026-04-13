@@ -11,10 +11,10 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
     proxy: {
-      "/api/document": {
+      "/api": {
         target: "http://127.0.0.1:3001",
         changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api\/document/, "/document"),
+        rewrite: (p) => p.replace(/^\/api/, ""),
       },
     },
   },

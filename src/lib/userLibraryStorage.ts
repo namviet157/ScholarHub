@@ -2,6 +2,23 @@ const BOOKMARKS = "scholarhub:bookmarks";
 const HISTORY = "scholarhub:history";
 const QUESTIONS = "scholarhub:questions";
 
+/** Works when `crypto.randomUUID` is missing (some non-secure contexts / older browsers). */
+function newLocalId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") {
+    return c.randomUUID();
+  }
+  if (c && typeof c.getRandomValues === "function") {
+    const buf = new Uint8Array(16);
+    c.getRandomValues(buf);
+    buf[6] = (buf[6]! & 0x0f) | 0x40;
+    buf[8] = (buf[8]! & 0x3f) | 0x80;
+    const hex = [...buf].map((b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export const libraryStorageEvents = {
   bookmarks: "scholarhub:bookmarks-changed",
   history: "scholarhub:history-changed",
@@ -71,7 +88,7 @@ export type QuestionLogEntry = {
 export function appendQuestionLog(entry: Omit<QuestionLogEntry, "id" | "at">): void {
   const prev = readJson<QuestionLogEntry[]>(QUESTIONS, []);
   const row: QuestionLogEntry = {
-    id: crypto.randomUUID(),
+    id: newLocalId(),
     at: new Date().toISOString(),
     ...entry,
   };

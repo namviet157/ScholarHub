@@ -29,7 +29,7 @@ export async function fetchPapersFromSupabase(limit = 500): Promise<Paper[]> {
 
   if (error) {
     console.error("Error fetching papers:", error.message);
-    throw new Error("Không thể tải danh sách bài báo.");
+    throw new Error("Could not load papers from Supabase.");
   }
 
   const rows = (data ?? []) as unknown as SupabasePaperRow[];

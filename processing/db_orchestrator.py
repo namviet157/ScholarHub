@@ -18,6 +18,7 @@ load_dotenv()
 
 from processing.ai_summarizer import get_summarizer
 from processing.ai_keyword_extractor import get_keyword_extractor
+from processing.vector_service import get_embedding_service
 _supabase: Optional[Client] = None
 _document_collection: Optional[Collection] = None
 
@@ -423,37 +424,40 @@ def get_paper_from_supabase(arxiv_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def update_supabase_mongo_doc_id(paper_id: int, mongo_doc_id: str):
+def update_supabase_mongo_doc_id(supabase_paper_id: str, mongo_doc_id: str) -> bool:
+    """supabase_paper_id is papers.id (uuid string)."""
     try:
         get_supabase().table("papers").update({
             "mongo_doc_id": mongo_doc_id
-        }).eq("id", paper_id).execute()
+        }).eq("id", supabase_paper_id).execute()
         return True
     except Exception as e:
-        print(f"Error updating Supabase for paper_id {paper_id}: {str(e)}")
+        print(f"Error updating Supabase for papers.id {supabase_paper_id}: {str(e)}")
         return False
 
 
-def update_supabase_embedding_status(paper_id: int, status: str):
+def update_supabase_embedding_status(supabase_paper_id: str, status: str) -> bool:
+    """Updates papers.embedding_status; supabase_paper_id is papers.id (uuid)."""
     try:
         get_supabase().table("papers").update({
             "embedding_status": status
-        }).eq("id", paper_id).execute()
+        }).eq("id", supabase_paper_id).execute()
         return True
     except Exception as e:
-        print(f"Error updating embedding status for paper_id {paper_id}: {str(e)}")
+        print(f"Error updating embedding status for papers.id {supabase_paper_id}: {str(e)}")
         return False
 
 
-def save_keywords_to_supabase(paper_id: int, keywords_data: Dict[str, Any]) -> bool:
+def save_keywords_to_supabase(supabase_paper_id: str, keywords_data: Dict[str, Any]) -> bool:
+    """keywords.paper_id should reference papers.id (uuid)."""
     try:
-        get_supabase().table("keywords").delete().eq("paper_id", paper_id).execute()
+        get_supabase().table("keywords").delete().eq("paper_id", supabase_paper_id).execute()
         
         keywords_to_insert = []
         
         for kw in keywords_data.get('keybert', []):
             keywords_to_insert.append({
-                'paper_id': paper_id,
+                'paper_id': supabase_paper_id,
                 'keyword': kw['keyword'],
                 'score': kw['score'],
                 'extraction_method': 'keybert',
@@ -469,7 +473,7 @@ def save_keywords_to_supabase(paper_id: int, keywords_data: Dict[str, Any]) -> b
         return False
         
     except Exception as e:
-        print(f"Error saving keywords to Supabase for paper_id {paper_id}: {str(e)}")
+        print(f"Error saving keywords to Supabase for papers.id {supabase_paper_id}: {str(e)}")
         import traceback
         traceback.print_exc()
         return False
@@ -644,8 +648,6 @@ def process_paper_json(json_path: Path) -> bool:
                 print(f"  Warning: Failed to save keywords to Supabase: {e}")
         
         try:
-            from processing.vector_service import get_embedding_service
-
             embedding_service = get_embedding_service()
             
             sections_with_content = reconstruct_sections_with_content(sections, chunks)
@@ -663,7 +665,6 @@ def process_paper_json(json_path: Path) -> bool:
             if embedding_service.process_paper(paper_data_for_embedding, sections_with_content):
                 if supabase_paper_id:
                     update_supabase_embedding_status(supabase_paper_id, "completed")
-                embedding_service.save()
                 print(f"  Generated and saved embeddings for {paper_id}")
             else:
                 if supabase_paper_id:
@@ -717,7 +718,9 @@ def process_all_papers():
         return
 
     coll = get_document_collection()
-    processed_ids = set(doc["paper_id"] for doc in coll.find({}, {"paper_id": 1}))
+    # Lấy danh sách arxiv_id đã embedding thành công từ Supabase
+    result = get_supabase().table("papers").select("arxiv_id").eq("embedding_status", "completed").execute()
+    processed_ids = set(row["arxiv_id"] for row in result.data)
     json_files = []
     for paper_dir in ARXIV_PAPERS_DIR.iterdir():
         if paper_dir.is_dir():

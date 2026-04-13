@@ -14,6 +14,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 const currentYear = new Date().getFullYear();
+const PAGE_SIZE = 10;
 
 function buildDefaultFilters(papers: { year: number }[]): PaperListFilters {
   if (!papers.length) {
@@ -43,6 +44,7 @@ const SearchResults = () => {
     venues: [],
     categories: [],
   }));
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     if (!papers.length) return;
@@ -55,6 +57,10 @@ const SearchResults = () => {
       };
     });
   }, [papers]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, filters, papers.length]);
 
   const venueOptions = useMemo(() => {
     const s = new Set<string>();
@@ -80,6 +86,13 @@ const SearchResults = () => {
     return list;
   }, [papers, query, filters]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paginated = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, safePage]);
+
   const filterPanel = (
     <SearchFilters
       value={filters}
@@ -88,6 +101,9 @@ const SearchResults = () => {
       categoryOptions={categoryOptions}
     />
   );
+
+  const rangeStart = filtered.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(safePage * PAGE_SIZE, filtered.length);
 
   return (
     <div className="min-h-screen bg-background">
@@ -106,7 +122,9 @@ const SearchResults = () => {
                   ? error instanceof Error
                     ? error.message
                     : "Could not load papers"
-                  : `Showing ${filtered.length} of ${papers.length} papers`}
+                  : filtered.length === 0
+                    ? `0 matches (${papers.length} in catalog)`
+                    : `Showing ${rangeStart}–${rangeEnd} of ${filtered.length} papers (${papers.length} in catalog)`}
             </p>
           </div>
 
@@ -154,9 +172,37 @@ const SearchResults = () => {
             )}
             {!isLoading &&
               !isError &&
-              filtered.map((paper) => (
+              paginated.map((paper) => (
                 <PaperCard key={paper.id} paper={paper} highlightText={query} />
               ))}
+
+            {!isLoading && !isError && totalPages > 1 && (
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-6 border-t border-border">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    disabled={safePage <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted tabular-nums px-2">
+                    Page {safePage} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    disabled={safePage >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
           </main>
         </div>
       </div>

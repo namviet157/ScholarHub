@@ -1,5 +1,6 @@
 import { User, Bot, Quote } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LatexContent } from "@/components/LatexContent";
 
 interface ChatMessageProps {
   role: "user" | "assistant";
@@ -33,13 +34,17 @@ const ChatMessage = ({ role, content, citations }: ChatMessageProps) => {
       >
         <div
           className={cn(
-            "inline-block rounded-2xl px-4 py-3 text-sm leading-relaxed",
+            "inline-block rounded-2xl px-4 py-3 text-sm leading-relaxed max-w-full text-left",
             isUser
               ? "bg-primary text-primary-foreground rounded-tr-sm"
               : "bg-card border border-border text-foreground rounded-tl-sm"
           )}
         >
-          <div className="whitespace-pre-wrap">{content}</div>
+          {isUser ? (
+            <div className="whitespace-pre-wrap">{content}</div>
+          ) : (
+            <LatexContent text={content} />
+          )}
         </div>
 
         {citations && citations.length > 0 && (

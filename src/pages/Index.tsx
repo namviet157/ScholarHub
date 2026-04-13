@@ -34,7 +34,8 @@ const Index = () => {
     {
       icon: MessageSquare,
       title: "Ask Your Papers",
-      description: "Chat with your documents. Ask questions and get answers with citations from your library.",
+      description:
+        "On any paper page, open the chat assistant to ask questions with RAG grounded in that paper's arXiv-indexed chunks.",
     },
     {
       icon: Quote,
