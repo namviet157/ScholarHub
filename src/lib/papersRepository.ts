@@ -20,12 +20,12 @@ const PAPER_LIST_SELECT = `
   keywords ( keyword, score )
 `;
 
-export async function fetchPapersFromSupabase(limit = 500): Promise<Paper[]> {
+export async function fetchPapersFromSupabase(): Promise<Paper[]> {
   const { data, error } = await supabase
     .from("papers")
     .select(PAPER_LIST_SELECT)
-    .order("arxiv_id", { ascending: true })
-    .limit(limit);
+    .order("mongo_doc_id", { ascending: false, nullsFirst: false }) 
+    .order("arxiv_id", { ascending: true });
 
   if (error) {
     console.error("Error fetching papers:", error.message);
@@ -50,6 +50,51 @@ export async function fetchPaperByIdFromSupabase(id: string): Promise<SupabasePa
   return data as unknown as SupabasePaperRow | null;
 }
 
+
+/** Normalize arXiv id for matching API rows to catalog papers. */
+export function normalizeArxivId(id: string | null | undefined): string {
+  if (!id?.trim()) return "";
+  return id
+    .replace(/^arxiv:/i, "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * When semantic search returns ranked arXiv ids, show those papers first (in order),
+ * then append keyword matches not already listed. If semantic is unavailable or empty, use keyword-only filter.
+ */
+export function orderPapersBySemanticThenLexical(
+  papers: Paper[],
+  q: string,
+  semanticArxivIds: string[] | undefined,
+  semanticWorked: boolean
+): Paper[] {
+  const query = q.trim();
+  if (!query) return papers;
+
+  if (semanticWorked && semanticArxivIds && semanticArxivIds.length > 0) {
+    const byArxiv = new Map<string, Paper>();
+    for (const p of papers) {
+      const k = normalizeArxivId(p.arxivId);
+      if (k && !byArxiv.has(k)) byArxiv.set(k, p);
+    }
+    const ordered: Paper[] = [];
+    const seenIds = new Set<string>();
+    for (const raw of semanticArxivIds) {
+      const k = normalizeArxivId(raw);
+      const p = k ? byArxiv.get(k) : undefined;
+      if (p && !seenIds.has(p.id)) {
+        ordered.push(p);
+        seenIds.add(p.id);
+      }
+    }
+    const lexicalRest = filterPapersByQuery(papers, q).filter((p) => !seenIds.has(p.id));
+    return [...ordered, ...lexicalRest];
+  }
+
+  return filterPapersByQuery(papers, q);
+}
 
 export function filterPapersByQuery(papers: Paper[], q: string): Paper[] {
   const query = q.trim().toLowerCase();
@@ -102,16 +147,4 @@ export function applyPaperFilters(papers: Paper[], filters: PaperListFilters): P
     }
     return true;
   });
-}
-
-export async function fetchPaperCount(): Promise<number> {
-  const { count, error } = await supabase.from("papers").select("*", {
-    count: "exact",
-    head: true,
-  });
-  if (error) {
-    console.warn("fetchPaperCount:", error.message);
-    return 0;
-  }
-  return count ?? 0;
 }

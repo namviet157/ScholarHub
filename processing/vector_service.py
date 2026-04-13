@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -13,6 +14,14 @@ EMBEDDING_DIM = 768
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 100
+
+
+def _paper_id_norm(pid: str) -> str:
+    x = (pid or "").strip().lower()
+    x = re.sub(r"^arxiv:", "", x)
+    x = re.sub(r"\.pdf$", "", x)
+    x = re.sub(r"v\d+$", "", x)
+    return x
 
 
 class EmbeddingGenerator:
@@ -142,9 +151,10 @@ class SupabaseVectorManager:
         except Exception:
             res = self._client.rpc(
                 "match_chunks",
-                {"query_embedding": q, "match_count": max(k * 4, 32)},
+                {"query_embedding": q, "match_count": max(k * 4, 64)},
             ).execute()
-        allowed = set(filter_paper_ids)
+        allowed_raw = set(filter_paper_ids)
+        allowed_norm = {_paper_id_norm(x) for x in filter_paper_ids}
         data = res.data or []
         results: List[Tuple[float, Dict[str, Any]]] = []
         for row in data:
@@ -152,7 +162,7 @@ class SupabaseVectorManager:
             if score < min_score:
                 continue
             pid = str(row.get("paper_id") or "")
-            if pid not in allowed:
+            if pid not in allowed_raw and _paper_id_norm(pid) not in allowed_norm:
                 continue
             meta = {
                 "chunk_id": row.get("id"),
@@ -161,33 +171,6 @@ class SupabaseVectorManager:
             }
             results.append((score, meta))
         return results
-
-    def search_chunks_lexical(
-        self, query_text: str, filter_paper_ids: List[str], k: int
-    ) -> List[Tuple[float, Dict[str, Any]]]:
-        """BM25/ts_rank-style lexical hits (optional hybrid). Returns (kw_rank, meta)."""
-        if not filter_paper_ids or not (query_text or "").strip():
-            return []
-        try:
-            res = self._client.rpc(
-                "match_chunks_lexical",
-                {
-                    "query_text": query_text.strip(),
-                    "filter_paper_ids": filter_paper_ids,
-                    "match_count": k,
-                },
-            ).execute()
-        except Exception:
-            return []
-        out: List[Tuple[float, Dict[str, Any]]] = []
-        for row in res.data or []:
-            meta = {
-                "chunk_id": row.get("id"),
-                "paper_id": row.get("paper_id"),
-                "content": row.get("content") or "",
-            }
-            out.append((float(row.get("kw_rank", 0.0)), meta))
-        return out
 
     def search_papers(
         self, query_embedding: np.ndarray, k: int = 10
@@ -205,10 +188,9 @@ class SupabaseVectorManager:
                     out.append((
                         float(row.get("score", 0.0)),
                         {
-                            "paper_id": str(row.get("id") or ""),
                             "arxiv_id": str(row.get("arxiv_id") or ""),
-                            "paper_title": row.get("paper_title") or "Unknown Title",
-                        }
+                            "paper_title": row.get("paper_title") or "",
+                        },
                     ))
                 return out
         except Exception as e:

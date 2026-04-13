@@ -1,18 +1,10 @@
-"""
-ScholarHub FastAPI: GET /document/{mongoObjectId}, POST /chat/rag.
-
-RAG: embed question (sentence-transformers, same as ingestion), retrieve chunks from
-Supabase via match_chunks_filtered restricted to arxiv_id(s), then OpenAI gpt-4o-mini.
-
-Env: see .env — SUPABASE_*, OPENAI_API_KEY, MONGO_URL, DATABASE_NAME, DOCUMENT_CONTENTS_COLLECTION,
-     DOCUMENTS_API_PORT (default 3001), OPENAI_CHAT_MODEL (default gpt-4o-mini).
-"""
 from __future__ import annotations
 
 import importlib.util
 import os
 import re
 import sys
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -42,12 +34,17 @@ get_embedding_service: Callable[[], Any] = _vector_mod.get_embedding_service
 OPENAI_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 
 INSUFFICIENT_VECTOR = (
-    "I don't have enough indexed content to answer for this paper. "
-    "Run the processing pipeline to embed chunks into Supabase (pgvector) for this arXiv id."
+    "No vector chunks were retrieved for this paper. "
+    "Ensure Supabase `chunks` rows exist with `paper_id` matching this arXiv id (try versioned and unversioned id), "
+    "or use MongoDB ingest and pass mongoDocIds from the app."
 )
 INSUFFICIENT_MONGO = (
-    "I don't have enough document content in the database to answer this question for the selected paper(s). "
-    "The full text may not have been ingested into MongoDB yet, or the document ID may be missing."
+    "No usable text chunks were found in MongoDB for this document. "
+    "Check DOCUMENT_CONTENTS_COLLECTION and that chunks use a `text` field."
+)
+INSUFFICIENT_NO_IDS = (
+    "This paper has no arXiv id and no MongoDB document id for RAG. "
+    "Add an arXiv id in Supabase or link a mongo_doc_id."
 )
 
 _mongo_client: Optional[MongoClient] = None
@@ -90,7 +87,8 @@ def build_context_from_doc(doc: Dict[str, Any], question: str, max_chars: int = 
     q_tokens = tokenize(question)
     scored = []
     for i, ch in enumerate(chunks):
-        raw = str((ch or {}).get("text") or "").strip()
+        chd = ch or {}
+        raw = str(chd.get("text") or chd.get("content") or "").strip()
         if not raw:
             continue
         scored.append({"i": i, "text": raw, "s": score_chunk(raw, q_tokens)})
@@ -123,43 +121,128 @@ def openai_complete(system_prompt: str, user_prompt: str) -> str:
     return (r.choices[0].message.content or "").strip()
 
 
-def retrieve_context_vector(
+def _arxiv_norm_for_match(s: str) -> str:
+    x = (s or "").strip().lower()
+    x = re.sub(r"^arxiv:", "", x)
+    x = re.sub(r"\.pdf$", "", x)
+    x = re.sub(r"v\d+$", "", x)
+    return x
+
+
+def _arxiv_id_filter_variants(aid: str) -> List[str]:
+    raw = (aid or "").strip()
+    if not raw:
+        return []
+    s = re.sub(r"^arxiv:", "", raw, flags=re.I).strip()
+    base = re.sub(r"v\d+$", "", s, flags=re.I)
+    out: List[str] = []
+    for v in (raw, s, base):
+        if v and v not in out:
+            out.append(v)
+    if s != base and base and base not in out:
+        out.append(base)
+    return out
+
+
+def _vector_hits_for_arxiv(
+    svc: Any,
+    q_emb: Any,
+    aid: str,
+    k: int = 12,
+) -> List[Tuple[float, Dict[str, Any]]]:
+    variants = _arxiv_id_filter_variants(aid)
+    hits: List[Tuple[float, Dict[str, Any]]] = []
+    if variants:
+        hits = svc.index_manager.search_chunks_filtered(
+            q_emb,
+            k=k,
+            filter_paper_ids=variants,
+            min_score=0.0,
+        )
+    if not hits:
+        norm_targets = (
+            {_arxiv_norm_for_match(v) for v in variants}
+            if variants
+            else {_arxiv_norm_for_match(aid)}
+        )
+        raw = svc.index_manager.search_chunks(q_emb, k=max(k * 4, 48))
+        for score, meta in raw:
+            pid = str(meta.get("paper_id") or "")
+            if _arxiv_norm_for_match(pid) in norm_targets:
+                hits.append((score, meta))
+            if len(hits) >= k:
+                break
+    return hits
+
+
+def _format_vector_block(aid: str, title: str, hits: List[Tuple[float, Dict[str, Any]]]) -> str:
+    chunk_lines: List[str] = []
+    for score, meta in hits:
+        content = (meta.get("content") or "").strip()
+        if not content:
+            continue
+        chunk_lines.append(f"(similarity {score:.3f}) {content}")
+    body = "\n\n".join(chunk_lines)
+    if not body:
+        return ""
+    return f"### Paper: {title} (arXiv:{aid})\n{body}"
+
+
+def assemble_rag_context(
     arxiv_ids: List[str],
-    question: str,
+    mongo_ids: List[str],
     paper_titles: List[str],
+    question: str,
     max_chars: int = 14000,
 ) -> Tuple[str, List[str]]:
+    """Per paper: Supabase vector chunks first, then Mongo for the same slot if vector is empty."""
     svc = get_embedding_service()
     q_emb = svc.generator.encode([question])[0]
+    coll = get_mongo_collection()
+
     blocks: List[str] = []
     citations: List[str] = []
     total = 0
-    for i, aid in enumerate(arxiv_ids):
-        aid = (aid or "").strip()
-        if not aid:
+
+    for i, (aid_raw, mid_raw) in enumerate(zip_longest(arxiv_ids, mongo_ids, fillvalue="")):
+        aid = (aid_raw or "").strip()
+        mid = str(mid_raw or "").strip()
+        mid_ok = bool(mid and re.match(r"^[a-f0-9]{24}$", mid, re.I))
+
+        title = ""
+        if i < len(paper_titles) and paper_titles[i]:
+            title = str(paper_titles[i]).strip()
+        if not title:
+            title = aid or (mid if mid_ok else "") or f"Paper {i + 1}"
+
+        part = ""
+        cite = ""
+
+        if aid:
+            hits = _vector_hits_for_arxiv(svc, q_emb, aid)
+            part = _format_vector_block(aid, title, hits)
+            cite = f"{title} ({aid})"
+
+        if not part.strip() and mid_ok and coll is not None:
+            doc = coll.find_one({"_id": ObjectId(mid)})
+            mt = (
+                paper_titles[i]
+                if i < len(paper_titles) and paper_titles[i]
+                else (doc.get("paper_id") if doc else mid)
+            )
+            body = build_context_from_doc(doc, question, 12000) if doc else ""
+            if body:
+                part = f"### Paper context ({mt})\n{body}"
+                cite = f"{mt} (MongoDB)"
+
+        if not part.strip():
             continue
-        hits = svc.index_manager.search_chunks_filtered(
-            q_emb,
-            k=12,
-            filter_paper_ids=[aid],
-            min_score=0.0,
-        )
-        title = paper_titles[i] if i < len(paper_titles) and paper_titles[i] else aid
-        chunk_lines: List[str] = []
-        for score, meta in hits:
-            content = (meta.get("content") or "").strip()
-            if not content:
-                continue
-            chunk_lines.append(f"(similarity {score:.3f}) {content}")
-        body = "\n\n".join(chunk_lines)
-        if not body:
-            continue
-        block = f"### Paper: {title} (arXiv:{aid})\n{body}"
-        if total + len(block) + 8 > max_chars:
+        if total + len(part) + 8 > max_chars:
             break
-        blocks.append(block)
-        total += len(block) + 8
-        citations.append(f"{title} ({aid})")
+        blocks.append(part)
+        citations.append(cite)
+        total += len(part) + 8
+
     return "\n\n---\n\n".join(blocks), citations
 
 
@@ -214,6 +297,54 @@ def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+class SemanticSearchRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    query: str = ""
+    limit: int = Field(48, ge=1, le=200)
+
+
+@app.post("/search/semantic")
+def search_semantic(req: SemanticSearchRequest):
+    """Embed query and rank papers via Supabase `match_papers` (pgvector on papers.embedding)."""
+    q = (req.query or "").strip()
+    if not q:
+        return JSONResponse(content={"ok": True, "arxivIds": [], "scores": []})
+
+    try:
+        svc = get_embedding_service()
+        q_emb = svc.generator.encode([q])[0]
+        hits = svc.index_manager.search_papers(q_emb, k=int(req.limit))
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "code": "SEMANTIC_UNAVAILABLE",
+                "message": str(e)[:800],
+                "arxivIds": [],
+                "scores": [],
+            },
+        )
+
+    arxiv_ids: List[str] = []
+    scores: List[float] = []
+    for score, meta in hits:
+        aid = str((meta or {}).get("arxiv_id") or "").strip()
+        if not aid:
+            continue
+        arxiv_ids.append(aid)
+        scores.append(float(score))
+
+    return JSONResponse(
+        content={
+            "ok": True,
+            "arxivIds": arxiv_ids,
+            "scores": scores,
+        }
+    )
+
+
 @app.get("/document/{doc_id}")
 def get_document(doc_id: str):
     if not re.match(r"^[a-f0-9]{24}$", doc_id, re.I):
@@ -246,7 +377,7 @@ def chat_rag(req: RagChatRequest):
                 "code": "LLM_DISABLED",
                 "message": (
                     "The Ask AI service is not configured. Set OPENAI_API_KEY in .env and restart "
-                    "the API server (`npm run api:documents` / uvicorn)."
+                    "the API server (`npm run api` / uvicorn)."
                 ),
             },
         )
@@ -258,57 +389,39 @@ def chat_rag(req: RagChatRequest):
     context_block = ""
     citations: List[str] = []
 
-    if arxiv_ids:
-        context_block, citations = retrieve_context_vector(arxiv_ids, question, titles)
-        if not context_block.strip():
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "ok": False,
-                    "code": "INSUFFICIENT_DATA",
-                    "message": INSUFFICIENT_VECTOR,
-                },
-            )
-    elif mongo_ids:
-        coll = get_mongo_collection()
-        if coll is None:
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "ok": False,
-                    "code": "INSUFFICIENT_DATA",
-                    "message": INSUFFICIENT_MONGO,
-                },
-            )
-        contexts: List[str] = []
-        for i, oid in enumerate(mongo_ids):
-            doc = coll.find_one({"_id": ObjectId(oid)})
-            title = titles[i] if i < len(titles) and titles[i] else (doc.get("paper_id") if doc else oid)
-            body = build_context_from_doc(doc, question, 12000) if doc else ""
-            if body:
-                contexts.append(f"### Paper context ({title})\n{body}")
-        context_block = "\n\n---\n\n".join(contexts)
-        if not context_block.strip():
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "ok": False,
-                    "code": "INSUFFICIENT_DATA",
-                    "message": INSUFFICIENT_MONGO,
-                },
-            )
-        citations = (
-            [t for t in titles if t][: len(mongo_ids)]
-            if titles
-            else mongo_ids
-        )
-    else:
+    if not arxiv_ids and not mongo_ids:
         return JSONResponse(
             status_code=200,
             content={
                 "ok": False,
                 "code": "INSUFFICIENT_DATA",
-                "message": INSUFFICIENT_VECTOR,
+                "message": INSUFFICIENT_NO_IDS,
+            },
+        )
+
+    context_block, citations = assemble_rag_context(arxiv_ids, mongo_ids, titles, question)
+
+    if not context_block.strip() and mongo_ids and get_mongo_collection() is None:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": False,
+                "code": "INSUFFICIENT_DATA",
+                "message": INSUFFICIENT_MONGO + " MongoDB is not configured on the server.",
+            },
+        )
+
+    if not context_block.strip():
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": False,
+                "code": "INSUFFICIENT_DATA",
+                "message": (
+                    INSUFFICIENT_VECTOR
+                    if arxiv_ids
+                    else INSUFFICIENT_MONGO
+                ),
             },
         )
 

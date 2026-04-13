@@ -1,15 +1,18 @@
--- Run in Supabase SQL editor after creating papers / sections / chunks tables.
--- Assumes pgvector column dimension matches BGE-base (768). Adjust if your column differs.
+-- Run in Supabase SQL editor after creating `papers` and `chunks`.
+--
+-- Expected `public.chunks`: id, paper_id, content, embedding (FK paper_id -> papers.arxiv_id).
+-- If you add section_id / chunk_index later, extend the RETURNS TABLE and SELECT lists in
+-- match_chunks / match_chunks_filtered to include those columns.
+--
+-- Embedding dimension must match the model (BGE-base-en-v1.5 => 768). Change vector(768) if needed.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Chunk similarity (inner product; use L2-normalized embeddings)
+-- Global chunk similarity (inner product; L2-normalized embeddings => score ~ cosine similarity)
 CREATE OR REPLACE FUNCTION public.match_chunks(query_embedding vector(768), match_count integer)
 RETURNS TABLE (
   id uuid,
   paper_id character varying,
-  section_id text,
-  chunk_index integer,
   content text,
   score double precision
 )
@@ -19,8 +22,6 @@ AS $$
   SELECT
     c.id,
     c.paper_id,
-    c.section_id,
-    c.chunk_index,
     c.content,
     (-(c.embedding <#> query_embedding))::double precision AS score
   FROM public.chunks c
@@ -55,7 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
 CREATE INDEX IF NOT EXISTS idx_papers_embedding_hnsw
   ON public.papers USING hnsw (embedding vector_ip_ops);
 
--- Filtered chunk search (paper_id + minimum inner-product similarity; embeddings L2-normalized => score ~ cosine sim)
+-- Filtered chunk search (paper_id list + minimum inner-product score)
 CREATE OR REPLACE FUNCTION public.match_chunks_filtered(
   query_embedding vector(768),
   match_count integer,
@@ -65,8 +66,6 @@ CREATE OR REPLACE FUNCTION public.match_chunks_filtered(
 RETURNS TABLE (
   id uuid,
   paper_id character varying,
-  section_id text,
-  chunk_index integer,
   content text,
   score double precision
 )
@@ -76,8 +75,6 @@ AS $$
   SELECT
     c.id,
     c.paper_id,
-    c.section_id,
-    c.chunk_index,
     c.content,
     (-(c.embedding <#> query_embedding))::double precision AS score
   FROM public.chunks c
@@ -87,44 +84,5 @@ AS $$
     AND cardinality(filter_paper_ids) > 0
     AND c.paper_id = ANY (filter_paper_ids)
   ORDER BY c.embedding <#> query_embedding
-  LIMIT match_count;
-$$;
-
--- Optional: lexical candidates for hybrid RAG (requires content indexed for search — add GIN if slow)
-CREATE INDEX IF NOT EXISTS idx_chunks_content_fts
-  ON public.chunks USING gin (to_tsvector('english', coalesce(content, '')));
-
-CREATE OR REPLACE FUNCTION public.match_chunks_lexical(
-  query_text text,
-  filter_paper_ids text[],
-  match_count integer
-)
-RETURNS TABLE (
-  id uuid,
-  paper_id character varying,
-  section_id text,
-  chunk_index integer,
-  content text,
-  kw_rank double precision
-)
-LANGUAGE sql
-STABLE
-AS $$
-  SELECT
-    c.id,
-    c.paper_id,
-    c.section_id,
-    c.chunk_index,
-    c.content,
-    ts_rank(
-      to_tsvector('english', coalesce(c.content, '')),
-      plainto_tsquery('english', query_text)
-    )::double precision AS kw_rank
-  FROM public.chunks c
-  WHERE c.content IS NOT NULL
-    AND cardinality(filter_paper_ids) > 0
-    AND c.paper_id = ANY (filter_paper_ids)
-    AND to_tsvector('english', coalesce(c.content, '')) @@ plainto_tsquery('english', query_text)
-  ORDER BY kw_rank DESC
   LIMIT match_count;
 $$;

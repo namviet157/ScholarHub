@@ -1,11 +1,9 @@
-import { Bookmark, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Paper } from "@/types/scholar";
 import { Link } from "react-router-dom";
-import { useBookmark } from "@/hooks/useBookmark";
-import { cn } from "@/lib/utils";
 
 interface PaperCardProps {
   paper: Paper;
@@ -17,8 +15,6 @@ function escapeRegExp(s: string): string {
 }
 
 const PaperCard = ({ paper, highlightText }: PaperCardProps) => {
-  const { bookmarked, toggle } = useBookmark(paper.id);
-
   const highlightMatch = (text: string) => {
     if (!highlightText?.trim()) return text;
     const esc = escapeRegExp(highlightText.trim());
@@ -83,19 +79,6 @@ const PaperCard = ({ paper, highlightText }: PaperCardProps) => {
           </div>
 
           <div className="flex flex-col gap-2 shrink-0">
-            <Button
-              variant="ghost"
-              size="icon"
-              type="button"
-              aria-label={bookmarked ? "Remove bookmark" : "Add bookmark"}
-              className={cn(
-                "text-muted hover:text-primary hover:bg-primary/10",
-                bookmarked && "text-primary"
-              )}
-              onClick={() => toggle()}
-            >
-              <Bookmark className={cn("h-5 w-5", bookmarked && "fill-primary")} />
-            </Button>
             <Button
               variant="ghost"
               size="icon"

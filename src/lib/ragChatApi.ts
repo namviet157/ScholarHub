@@ -1,8 +1,9 @@
-/** Shown when no arXiv ids or the API reports missing indexed chunks */
 export const RAG_INSUFFICIENT_MESSAGE =
-  "I don't have enough data to answer. Provide papers with an arXiv id and ensure chunk embeddings exist in Supabase (run the processing pipeline), or check MongoDB document content if using legacy ingest.";
+  "I don't have enough data to answer. Please try again with a different paper.";
 
 const INSUFFICIENT_CLIENT = RAG_INSUFFICIENT_MESSAGE;
+
+const MONGO_ID_RE = /^[a-f0-9]{24}$/i;
 
 export type RagChatResult =
   | { ok: true; answer: string; citations: string[] }
@@ -10,18 +11,27 @@ export type RagChatResult =
 
 export async function ragChatQuery(params: {
   question: string;
-  /** arXiv ids as stored in Supabase `papers.arxiv_id` / chunk `paper_id` */
   arxivIds: string[];
   paperTitles?: string[];
+  /** MongoDB ObjectId strings for fallback when pgvector chunks are missing. */
+  mongoDocIds?: string[];
 }): Promise<RagChatResult> {
   const ids = params.arxivIds
     .map((id) => String(id || "").trim())
     .filter((id) => id.length > 0);
-  if (ids.length === 0) {
+  const mongoIds = (params.mongoDocIds ?? [])
+    .map((id) => String(id || "").trim())
+    .filter((id) => MONGO_ID_RE.test(id));
+
+  if (ids.length === 0 && mongoIds.length === 0) {
     return { ok: false, code: "INSUFFICIENT_DATA", message: INSUFFICIENT_CLIENT };
   }
 
-  const base = import.meta.env.VITE_RAG_API_URL?.replace(/\/$/, "") ?? "";
+  const base = (
+    import.meta.env.VITE_SCHOLARHUB_API_URL ||
+    import.meta.env.VITE_RAG_API_URL ||
+    ""
+  ).replace(/\/$/, "");
   const url = base ? `${base}/chat/rag` : `/api/chat/rag`;
 
   try {
@@ -32,6 +42,7 @@ export async function ragChatQuery(params: {
         question: params.question,
         arxivIds: ids,
         paperTitles: params.paperTitles ?? [],
+        mongoDocIds: mongoIds,
       }),
     });
 
@@ -58,7 +69,7 @@ export async function ragChatQuery(params: {
       ok: false,
       code: "NETWORK",
       message:
-        "Could not reach the RAG API. In development, run `npm run api:documents` (Python/FastAPI) and ensure OPENAI_API_KEY plus Supabase env vars are set.",
+        "Could not reach the RAG API. In development, run `npm run api` (Python/FastAPI) and ensure OPENAI_API_KEY plus Supabase env vars are set.",
     };
   }
 }

@@ -1,13 +1,21 @@
 import type { MongoDocumentPayload } from "@/types/scholar";
 
+function scholarhubApiBase(): string {
+  return (
+    import.meta.env.VITE_SCHOLARHUB_API_URL ||
+    import.meta.env.VITE_RAG_API_URL ||
+    ""
+  ).replace(/\/$/, "");
+}
+
 export async function fetchMongoDocument(
   mongoDocId: string | null | undefined
 ): Promise<MongoDocumentPayload | null> {
   if (!mongoDocId?.trim()) return null;
 
-  const customBase = import.meta.env.VITE_DOCUMENT_CONTENTS_API_URL?.replace(/\/$/, "");
-  const url = customBase
-    ? `${customBase}/document/${encodeURIComponent(mongoDocId)}`
+  const base = scholarhubApiBase();
+  const url = base
+    ? `${base}/document/${encodeURIComponent(mongoDocId)}`
     : `/api/document/${encodeURIComponent(mongoDocId)}`;
 
   try {
