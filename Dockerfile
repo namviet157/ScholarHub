@@ -1,32 +1,28 @@
-# Use Python 3.11 slim image as base
+# ScholarHub FastAPI backend (RAG, semantic search, document proxy)
 FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file first for better caching
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-base-en-v1.5')"
 
-# Download NLTK data (required for keywords extraction)
-RUN python -c "import nltk; nltk.download('stopwords', quiet=True)"
+COPY server/ ./server/
+COPY processing/vector_service.py ./processing/vector_service.py
 
-# Copy the entire project
-COPY . .
-
-# Create necessary directories
-RUN mkdir -p embeddings ArXivPapers
-
-# Set Python path to include the project root
 ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
 
-# Default command - run the import script
-CMD ["python", "processing/import_to_mongodb.py"]
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+  CMD python -c "import os, urllib.request; p=os.environ.get('PORT','8000'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=5)"
+
+CMD ["sh", "-c", "exec uvicorn server.scholarhub_api:app --host 0.0.0.0 --port ${PORT:-8000}"]
