@@ -1,28 +1,48 @@
-# ScholarHub FastAPI backend (RAG, semantic search, document proxy)
-FROM python:3.11-slim
+# ScholarHub Vite + React frontend (static build, served with `serve`)
+# Build-time: pass Railway/build args for Vite (baked into the bundle).
+# VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_SCHOLARHUB_API_URL (optional: VITE_RAG_API_URL)
+# Runtime: Railway sets PORT; `npm start` serves ./dist.
+
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json \
+ postcss.config.js tailwind.config.ts components.json ./
+COPY src ./src
+COPY public ./public
 
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-base-en-v1.5')"
+ARG VITE_SUPABASE_URL=
+ARG VITE_SUPABASE_ANON_KEY=
+ARG VITE_SCHOLARHUB_API_URL=
+ARG VITE_RAG_API_URL=
 
-COPY server/ ./server/
-COPY processing/vector_service.py ./processing/vector_service.py
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
+    VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY \
+    VITE_SCHOLARHUB_API_URL=$VITE_SCHOLARHUB_API_URL \
+    VITE_RAG_API_URL=$VITE_RAG_API_URL
 
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
+RUN npm run build
 
-EXPOSE 8000
+FROM node:22-alpine AS runner
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
-  CMD python -c "import os, urllib.request; p=os.environ.get('PORT','8000'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=5)"
+WORKDIR /app
 
-CMD ["sh", "-c", "exec uvicorn server.scholarhub_api:app --host 0.0.0.0 --port ${PORT:-8000}"]
+ENV NODE_ENV=production
+ENV PORT=3000
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY --from=builder /app/dist ./dist
+COPY scripts/static-serve.mjs ./scripts/static-serve.mjs
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||'3000')+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["npm", "start"]

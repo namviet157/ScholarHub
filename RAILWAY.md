@@ -6,7 +6,7 @@ Use **two services** in one Railway project (same GitHub repo): **API** (Docker)
 
 1. **New** → **GitHub Repo** → select this repository.
 2. **Settings** → **Build**:
-   - Builder: **Dockerfile** (repo root `Dockerfile` builds the API only).
+   - Builder: **Dockerfile**, path: **`Dockerfile.api`** (FastAPI image).
 3. **Settings** → **Deploy**:
    - **Healthcheck path**: `/health`
    - **Healthcheck timeout**: `300` (first boot loads PyTorch + embeddings).
@@ -30,9 +30,8 @@ Use **two services** in one Railway project (same GitHub repo): **API** (Docker)
 
 1. **New** → **GitHub Repo** → **same repository** again.
 2. **Settings** → **Build**:
-   - If Railway picks Docker by default, switch builder to **Railpack** / **Nixpacks** (Node) so it runs `npm install` + `npm run build`, **not** the root Dockerfile.
-   - **Build command**: `npm run build` (default if `build` exists).
-   - **Start command**: `npm start` (runs `node scripts/static-serve.mjs` → serves `dist/` on `$PORT`).
+   - **Option A — Docker**: Builder **Dockerfile**, path **`Dockerfile`** (root). Add **Docker Build Args** (same names as below) so Vite receives `VITE_*` at image build time.
+   - **Option B — Nixpacks/Railpack**: If the platform defaults to the root Dockerfile, switch to **Railpack** / **Nixpacks** (Node). **Build**: `npm run build`. **Start**: `npm start` (`dist/` on `$PORT`).
 3. **Variables** — set **before** the first build (Vite bakes `VITE_*` at build time):
 
    | Variable | Notes |
